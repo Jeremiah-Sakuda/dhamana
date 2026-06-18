@@ -1,4 +1,4 @@
-import { BlockedError, isConflict } from "../db/errors.js";
+import { BlockedError, isConflict } from "../db/errors";
 
 /** JSON success envelope. */
 export function ok(data: Record<string, unknown> = {}) {

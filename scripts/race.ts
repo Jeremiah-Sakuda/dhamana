@@ -5,9 +5,9 @@
  *   npm run race
  *   DB_BACKEND=postgres DATABASE_URL=... npm run race
  */
-import { runRace } from "../src/db/race.js";
-import { getRegions } from "../src/db/index.js";
-import { HERO_LISTING_ID } from "../src/data/seed.js";
+import { runRace } from "../src/db/race";
+import { getRegions } from "../src/db/index";
+import { HERO_LISTING_ID } from "../src/data/seed";
 
 function line(s = "") {
   process.stdout.write(s + "\n");

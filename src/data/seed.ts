@@ -3,7 +3,7 @@ import type {
   Seller,
   Listing,
   Verification,
-} from "../db/types.js";
+} from "../db/types";
 
 /**
  * Deterministic seed data. Fixed UUIDs keep demo URLs and the race harness

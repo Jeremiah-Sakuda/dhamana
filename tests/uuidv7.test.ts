@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { uuidv7, uuidv7Time } from "../src/lib/uuidv7.js";
+import { uuidv7, uuidv7Time } from "../src/lib/uuidv7";
 
 describe("uuidv7", () => {
   it("produces valid v7 UUIDs", () => {

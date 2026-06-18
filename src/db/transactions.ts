@@ -1,13 +1,13 @@
-import { BlockedError } from "./errors.js";
-import { retryOnConflict, type RetryOptions } from "./retry.js";
-import { uuidv7 } from "../lib/uuidv7.js";
-import { TIERS } from "../lib/tiers.js";
+import { BlockedError } from "./errors";
+import { retryOnConflict, type RetryOptions } from "./retry";
+import { uuidv7 } from "../lib/uuidv7";
+import { TIERS } from "../lib/tiers";
 import type {
   Backend,
   EscrowEntry,
   Order,
   Tier,
-} from "./types.js";
+} from "./types";
 
 /**
  * The three load-bearing transactions, written ONCE against the Repo interface

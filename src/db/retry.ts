@@ -1,4 +1,4 @@
-import { isConflict, ConflictError } from "./errors.js";
+import { isConflict, ConflictError } from "./errors";
 
 export interface RetryOptions {
   /** Max attempts including the first. DSQL guidance: retry conflicts aggressively. */

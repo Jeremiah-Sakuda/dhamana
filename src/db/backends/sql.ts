@@ -2,7 +2,7 @@ import type { Sql } from "postgres";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { seedData } from "../../data/seed.js";
+import { seedData } from "../../data/seed";
 import type {
   Backend,
   BackendName,
@@ -18,7 +18,7 @@ import type {
   Tx,
   User,
   Verification,
-} from "../types.js";
+} from "../types";
 
 /**
  * Backend for any Postgres-wire database: a local/standard Postgres

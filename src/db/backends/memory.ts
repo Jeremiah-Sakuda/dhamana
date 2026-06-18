@@ -1,5 +1,5 @@
-import { ConflictError } from "../errors.js";
-import { seedData } from "../../data/seed.js";
+import { ConflictError } from "../errors";
+import { seedData } from "../../data/seed";
 import type {
   Backend,
   EscrowAccount,
@@ -17,7 +17,7 @@ import type {
   VerificationStatus,
   EscrowState,
   OrderStatus,
-} from "../types.js";
+} from "../types";
 
 /**
  * In-process backend that reproduces Aurora DSQL's optimistic concurrency

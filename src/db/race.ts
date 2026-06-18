@@ -1,8 +1,8 @@
-import { getRegions, REGION_A_LABEL, REGION_B_LABEL } from "./index.js";
-import { placeOrder, placeOrderNaive, reconcile, type Reconciliation } from "./transactions.js";
-import { BlockedError, isConflict } from "./errors.js";
-import { BUYER_AMARA_ID, BUYER_KWAME_ID, HERO_LISTING_ID } from "../data/seed.js";
-import type { Backend } from "./types.js";
+import { getRegions, REGION_A_LABEL, REGION_B_LABEL } from "./index";
+import { placeOrder, placeOrderNaive, reconcile, type Reconciliation } from "./transactions";
+import { BlockedError, isConflict } from "./errors";
+import { BUYER_AMARA_ID, BUYER_KWAME_ID, HERO_LISTING_ID } from "../data/seed";
+import type { Backend } from "./types";
 
 /**
  * The two-region race harness — the showpiece.

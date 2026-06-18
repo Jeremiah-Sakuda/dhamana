@@ -4,7 +4,7 @@
  *
  * For the memory backend this is a no-op (schema is implicit).
  */
-import { getBackendName, getRegions } from "../src/db/index.js";
+import { getBackendName, getRegions } from "../src/db/index";
 
 async function main() {
   const name = await getBackendName();

@@ -1,6 +1,6 @@
-import { MemoryBackend } from "./backends/memory.js";
-import { SqlBackend } from "./backends/sql.js";
-import type { Backend, BackendName } from "./types.js";
+import { MemoryBackend } from "./backends/memory";
+import { SqlBackend } from "./backends/sql";
+import type { Backend, BackendName } from "./types";
 
 /**
  * Backend selection + the two regional endpoints.
@@ -54,7 +54,7 @@ function build(): Promise<Endpoints> {
 
   // dsql
   return (async () => {
-    const { createDsqlClient, dsqlConfigFromEnv } = await import("./dsql.js");
+    const { createDsqlClient, dsqlConfigFromEnv } = await import("./dsql");
     const cfgA = dsqlConfigFromEnv("A");
     if (!cfgA) throw new Error("DB_BACKEND=dsql requires DSQL_REGION_A_HOST + DSQL_REGION_A");
     const sqlA = await createDsqlClient(cfgA);

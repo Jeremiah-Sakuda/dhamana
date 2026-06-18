@@ -1,4 +1,4 @@
-import type { Tier } from "../db/types.js";
+import type { Tier } from "../db/types";
 
 /**
  * The trust tier is not cosmetic — it gates concrete capability, and that gate

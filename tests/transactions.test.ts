@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { freshMemoryBackend } from "../src/db/index.js";
+import { freshMemoryBackend } from "../src/db/index";
 import {
   placeOrder,
   placeOrderNaive,
@@ -7,9 +7,9 @@ import {
   refundEscrow,
   decideVerification,
   reconcile,
-} from "../src/db/transactions.js";
-import { BlockedError } from "../src/db/errors.js";
-import type { Backend } from "../src/db/types.js";
+} from "../src/db/transactions";
+import { BlockedError } from "../src/db/errors";
+import type { Backend } from "../src/db/types";
 import {
   BUYER_AMARA_ID,
   BUYER_KWAME_ID,
@@ -17,7 +17,7 @@ import {
   HERO_LISTING_ID,
   HIGH_VALUE_LISTING_ID,
   SELLER_WANJIRU_ID,
-} from "../src/data/seed.js";
+} from "../src/data/seed";
 
 let db: Backend;
 beforeEach(async () => {
