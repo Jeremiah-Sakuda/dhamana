@@ -1,23 +1,21 @@
-# Dhamana
+# Verdict — the fair-drop engine
 
-> **A verified cross-border marketplace where money cannot move without a verification record, and the books cannot diverge across continents — both enforced at commit, not in hopeful application code.**
+> **When 100,000 fans race for 10,000 seats, the database itself guarantees you cannot oversell a seat, cannot resell a ticket twice, and cannot buy without being a verified fan — enforced at commit on Amazon Aurora DSQL, across active-active regions, at flash-drop scale.**
 
-*Dhamana* (Swahili: *guarantee / surety*). Built for **H0: Hack the Zero Stack** — Track: **Monetizable B2C App** — on **Amazon Aurora DSQL** + **Next.js on Vercel**.
+Built for **H0: Hack the Zero Stack** (Vercel + AWS Databases) · Track: **Million-Scale Global App** · Database: **Amazon Aurora DSQL** (multi-region).
 
 ---
 
 ## The one thing to understand
 
-Most marketplaces treat a "verified" badge as a UI label, and most run a single-region backend where a buyer in Atlanta and a seller in Nairobi read stale, divergent state. Dhamana makes two things **database invariants** instead of hopeful app code:
+Ticketing's worst failures — overselling a show, bots sweeping inventory, the same ticket sold to three people, refund leakage — are all enforced today in fragile **application** code that bots route around and that diverges across regions. Verdict makes each one a **database invariant**, un-bypassable at commit:
 
-1. **The verification badge is a row the database checks before money moves.** A high-value order against an unverified seller is rejected *inside the same transaction that would have created it*.
-2. **The escrow ledger cannot diverge across regions.** Every mutation either commits atomically or conflicts and retries, so two strongly-consistent regional endpoints always read one truth.
+1. **No oversell.** Seats are a sharded, contested counter; two buyers racing the last seat conflict at commit (`SQLSTATE 40001`) and one fails safe.
+2. **No bot sweep.** Buying requires a **verified-fan** record and respects a per-event cap — checked *inside the buy transaction*, not by a UI throttle. The badge is a row, not a label.
+3. **No double-sale.** A ticket is a capability row whose holder moves atomically; it can never be valid for two people.
+4. **The books always reconcile.** Escrow holds, releases, and refunds are an append-only ledger where `held + Σrelease + Σrefund = Σhold`, identical from either regional endpoint.
 
-Stated for judges in one sentence:
-
-> Across two regions, Dhamana **cannot oversell inventory, cannot double-release escrow, and cannot grant a capability without a matching verification record** — because the database rejects conflicting commits (Aurora DSQL's optimistic concurrency control, `SQLSTATE 40001`), not because the application remembered to check.
-
-The hero claim is provable on camera in the **[Consistency showpiece](#the-showpiece)**: fire two concurrent orders for the last unit from two endpoints; the naive path oversells, the guarded path does not.
+And it does this **at flash-drop scale**: a single hot seat counter collapses under a stampede, so inventory is **sharded into N buckets** — same zero-oversell guarantee, ~10× the throughput.
 
 ---
 
@@ -25,226 +23,114 @@ The hero claim is provable on camera in the **[Consistency showpiece](#the-showp
 
 ```bash
 npm install
-npm run dev          # → http://localhost:3939  (set any port you like)
+npm run dev          # → http://localhost:3939
 ```
 
 The default backend is an **in-process engine that faithfully reproduces DSQL's
-commit-time OCC conflict** (SQLSTATE 40001). The entire app — browse, checkout,
-escrow, verification, and the two-region race — runs with zero external
-dependencies. See [Backends](#backends-one-codebase-three-engines) for how the
-same code runs against real Aurora DSQL.
+commit-time OCC conflict (40001)** — the whole app, the two-region race, and the
+load benchmark run with zero external dependencies.
 
 ```bash
-npm test             # 12 concurrency tests (oversell, idempotency, gate, reconciliation)
-npm run race         # the two-region race, naive vs guarded, in your terminal
+npm test             # 18 concurrency tests (oversell, gate, resale, reconciliation, idempotency)
+npm run race         # two-region race: naive write-skew oversell vs guarded fail-safe
+npm run load         # flash-drop benchmark: 1 hot bucket vs 16 vs 64
 ```
 
-Sample `npm run race` output:
+Sample `npm run load` (120 concurrent buyers, 1,000-seat section):
 
 ```
-━━ NAIVE (check-then-act, separate statements, no guard) ━━
-  [us-east-1] Amara: ✅ order 019edb98   (attempts=1, conflicts=0)
-  [us-east-2] Kwame: ✅ order 019edb98   (attempts=1, conflicts=0)
-  inventory: start 1 → end -1 ... oversold: YES ❌
-
-━━ GUARDED (T1, single transaction, conflict-arbitrated) ━━
-  [us-east-1] Amara: ✅ order 019edb99   (attempts=1, conflicts=0)
-  [us-east-2] Kwame: 🛑 insufficient_inventory  (attempts=2, conflicts=1)
-  inventory: start 1 → end 0 ... oversold: no ✅
-  hero claim demonstrated: YES ✅
+buckets |  ok  | blocked | 40001 retries |   ms  | buys/sec | oversold
+--------+------+---------+---------------+-------+----------+---------
+     1  |   63 |      57 |           490 |   499 |      126 | no ✅      ← hot row sheds buyers
+    16  |  120 |       0 |           354 |   203 |      591 | no ✅
+    64  |  120 |       0 |            99 |    96 |     1250 | no ✅      ← sharded scales
 ```
 
 ---
 
-## What's built (and what's honestly mocked)
+## The load-bearing transactions
 
-**In (demoed):** seller listings with finite inventory · browse → listing →
-checkout → order · escrow hold on order, release on delivery, refund on dispute ·
-verification records + tier-gated capability (order ceilings, fee tiers) · the
-naive-vs-guarded toggle and two-endpoint race harness · reviewer approve/revoke.
+Written once against a `Repo` interface ([`src/db/transactions.ts`](src/db/transactions.ts)); the real SQL lives in [`src/db/backends/sql.ts`](src/db/backends/sql.ts). All run unchanged on memory / postgres / DSQL, each wrapped in retry-on-`40001`.
 
-**Mocked (clearly labeled):** payments/settlement (escrow is a ledger
-abstraction — no real money moves) · identity/KYC (an `evidence_url` reference) ·
-currency conversion (single display currency; amounts in minor units/cents).
-
-**Out of scope:** real payment rails, AML/KYC, fraud scoring, logistics,
-disputes-at-scale, messaging. Being explicit about this keeps the build focused
-on the database story.
-
----
-
-## The three load-bearing transactions
-
-The technical centerpiece. Each runs in one DSQL transaction wrapped in a
-retry-on-`40001` helper. Written **once** against a repository interface in
-[`src/db/transactions.ts`](src/db/transactions.ts); the real SQL lives in
-[`src/db/backends/sql.ts`](src/db/backends/sql.ts).
-
-| | What it guarantees | How |
+| | Guarantees | How |
 |---|---|---|
-| **T1 — place order + hold escrow** | No oversell · verification gate | Reads listing + seller tier, checks the tier ceiling and stock, decrements inventory, inserts order + escrow account + `hold` entry — atomically. The contended inventory `UPDATE` is the conflict point DSQL arbitrates at commit. |
-| **T2 — release / refund escrow** | No double-release | Reads the escrow account; if already settled, returns (idempotent). Otherwise writes a `release`/`refund` entry, zeroes the balance, advances the order. Concurrent double-release: one wins, the other retries and no-ops. |
-| **T3 — verification decision** | Trust state never half-applied | Inserts the append-only `verifications` record **and** updates the seller's denormalized `current_tier` together. The audit trail and the gate the DB checks can never disagree. |
-
-**Reconciliation invariant** (asserted in the UI and tests): for every order,
-`held_cents + Σ release + Σ refund = Σ hold`.
+| **T1 — buy + hold escrow** | no oversell · verified-fan gate · idempotent | Reads the buyer's tier, enforces the per-event cap, then **takes a seat from a sharded stock bucket** — the contended `UPDATE` DSQL arbitrates at commit. Inserts order + escrow `hold` + ticket capability rows atomically. |
+| **T2 — release / refund** | no double-release · refund voids tickets | Idempotent: if already settled, no-op. Concurrent double-release → one wins. |
+| **T3 — verify** | trust state never half-applied | Append-only `verifications` row **and** the fan's tier move in one transaction. |
+| **T4 — escrowed resale** | no double-sale · price cap enforced at commit | Asserts price ≤ the ticket's DB cap, **moves the capability atomically**, opens an escrow hold. |
 
 ---
 
-## Designed around DSQL's real constraints (not fighting them)
+## Designed around DSQL's real constraints
 
-Dhamana was designed for DSQL from line one. The specifics that shaped the code
-(verified against AWS docs — see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)):
+Verified against AWS docs (see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)):
 
-- **No foreign keys, triggers, sequences, `SERIAL`, PL/pgSQL.** Referential
-  integrity lives in the transactions; primary keys are **client-generated
-  UUIDv7** (time-sortable, spread across the keyspace to avoid hot-key contention).
-- **Optimistic concurrency control.** Conflicts surface at **commit** as
-  `SQLSTATE 40001` (DSQL sub-codes `OC000`/`OC001`). Every write path flows
-  through [`retryOnConflict`](src/db/retry.ts) with full-jitter backoff.
-- **`SELECT ... FOR UPDATE` is a no-op under DSQL** (no row locks under OCC). We
-  deliberately **do not** rely on it — the contended `UPDATE` itself is what
-  creates the write-write conflict the database rejects. This is a common
-  footgun; getting it right is the point.
-- **Isolation is fixed at `REPEATABLE READ`** on DSQL (can't be changed). For the
-  local `postgres` backend we set `SERIALIZABLE` so it raises the same `40001`.
-- **No `CHECK` constraints** assumed; "never below 0" and enum rules are enforced
-  in-transaction.
-- **Limits respected:** ~3,000 row mods / 10 MiB / 5-min per transaction, one DDL
-  per transaction, no DDL+DML mixing; ~60-min connection lifetime → the pool
-  recycles at ~50 min and refreshes IAM tokens on reconnect.
+- **OCC, conflicts at commit (`40001`/`OC000`).** Every write flows through [`retryOnConflict`](src/db/retry.ts) with full-jitter backoff, tuned for contention.
+- **`SELECT … FOR UPDATE` is a no-op under DSQL.** We never rely on it — the contended `UPDATE` (a stock bucket, the escrow account, the ticket row) is the conflict point.
+- **Snapshot isolation permits write skew.** The *naive* path counts orders then inserts (different rows, no conflict) → it oversells, even on DSQL. The guarded path contends on the shared bucket. That's the whole lesson, demoed live.
+- **Sharded counter** turns one hot SKU row into N warm rows (`section_stock_buckets`) so a stampede scales.
+- **No FK/SERIAL/CHECK**, client **UUIDv7** keys, `CREATE INDEX ASYNC`, the 3,000-row/5-min txn + ~60-min connection limits all respected; IAM auth tokens refreshed per connection.
 
-**Why DSQL and not Aurora/DynamoDB?** The product needs SQL-shaped transactional
-invariants (inventory + escrow + verification, atomic together) **and**
-active-active multi-region strong consistency so two continents read one truth.
-Standard Aurora gives the SQL but not active-active multi-region writes. DynamoDB
-gives the scale but pushes multi-item transactional invariants into awkward
-territory. DSQL gives both — exactly the sweet spot for this consistency story.
+**Why DSQL and not Aurora/DynamoDB?** Fair allocation needs SQL transactional invariants **and** active-active multi-region strong consistency in one system. Standard Aurora lacks active-active writes; DynamoDB makes multi-item invariants awkward. DSQL gives both.
 
 ---
 
 ## Backends: one codebase, three engines
 
-`DB_BACKEND` selects where the **same** application transactions run:
-
 | `DB_BACKEND` | Engine | Conflict mechanism | Use |
 |---|---|---|---|
 | `memory` *(default)* | in-process OCC engine | snapshot read-set validated at commit → `40001` | local dev, CI, self-contained demo |
-| `postgres` | any Postgres | `SERIALIZABLE` isolation → `40001` | fidelity check against a real SQL engine |
-| `dsql` | **Amazon Aurora DSQL** | DSQL OCC → `40001` (`OC000`) | production / Vercel |
+| `postgres` | any Postgres | `SERIALIZABLE` → `40001` | fidelity check |
+| `dsql` | **Amazon Aurora DSQL** | OCC → `40001` (`OC000`) | production / Vercel |
 
 ```bash
-# Local Postgres (raises the same 40001 the race relies on)
-DB_BACKEND=postgres DATABASE_URL=postgres://localhost:5432/dhamana npm run race
-
-# Aurora DSQL — IAM auth tokens, two regional endpoints
 DB_BACKEND=dsql \
   DSQL_REGION_A_HOST=<cluster>.dsql.us-east-1.on.aws DSQL_REGION_A=us-east-1 \
-  DSQL_REGION_B_HOST=<cluster>.dsql.us-east-2.on.aws DSQL_REGION_B=us-east-2 \
-  npm run db:schema && npm run seed
+  DSQL_REGION_B_HOST=<cluster>.dsql.us-west-2.on.aws DSQL_REGION_B=us-west-2 \
+  npm run db:schema && npm run seed && npm run smoke:dsql
 ```
 
-See [`.env.example`](.env.example) for all variables.
+`smoke:dsql` proves the guarded hero claim + the sharded burst on the real cluster.
 
 ---
 
-## The showpiece
+## The showpiece — `/consistency`
 
-`/consistency` fires the two-region race live. Toggle **Naive** (a realistic
-anti-pattern: "check" availability by counting orders, then insert without
-contending on a shared row) vs **Guarded** (T1: decrement the shared listing row
-inside one transaction).
-
-A nuance worth stating plainly, because it's the strongest thing about DSQL:
-
-- On a **conventional single-region database** (which the default in-process
-  engine models), the naive path **oversells every time** — two payments held for
-  one unit.
-- On **real Aurora DSQL**, the same naive code **still oversells intermittently**:
-  DSQL's isolation is *snapshot* (REPEATABLE READ), which permits **write skew** —
-  two transactions reading a predicate (`count(*)`) and inserting *different* rows
-  never conflict. Fast commit ordering often closes the window, but not always
-  (verified live — `npm run smoke:dsql` has caught it oversell on the real cluster).
-- The **guarded** path eliminates it entirely: by decrementing the **shared
-  listing row**, it turns the race into a write-write conflict DSQL rejects at
-  commit (`40001`), then retries to a graceful "sold out" — and both regional
-  endpoints report identical final state.
-
-The lesson (and the reason this is a *good* DSQL demo): you have to make the
-contention **visible to the engine** by writing the contested row. Read a
-predicate and write elsewhere, and snapshot isolation will let you oversell —
-even on DSQL. The guarded transaction is what makes the guarantee hold, verified
-on a live multi-region cluster.
-
-Full walkthrough: [docs/DEMO.md](docs/DEMO.md).
+Toggle **naive** (write-skew oversell) vs **guarded** (no oversell, the loser hits `40001` and fails safe; both endpoints agree), then **run the flash-drop load test** to watch a single hot bucket shed buyers while 64 buckets serve them all — zero oversell throughout. Full script: [docs/DEMO.md](docs/DEMO.md).
 
 ---
 
-## Monetization
+## Monetization & impact
 
-A transaction fee (5–8%) is taken from escrow at release. **Verified** and
-**trusted** sellers get lower fees and higher order ceilings:
-
-| Tier | Per-order ceiling | Fee |
-|---|---|---|
-| Unverified | $500 | 8% |
-| Verified | $5,000 | 6% |
-| Trusted | $50,000 | 5% |
-
-Verifying lowers a seller's cost and raises their ceiling, so trust compounds
-into volume — the business model and the trust primitive are the **same
-flywheel**.
+A 3–5% primary take rate (undercutting incumbents' 20–30%), a 5–10% spread on **escrowed, price-capped** resale, and verified-fan SLAs for promoters. Live-events ticketing is a ~$70–85B GMV market; secondary/resale ~$25–30B (the scalping pool this attacks). The same primitives generalize to any **contested-scarce-resource-at-scale** market — see [docs/SUBMISSION.md](docs/SUBMISSION.md) for the catalog (sneaker drops, airline seats, console restocks, appointment systems, carbon-credit registries, …).
 
 ---
 
 ## Repository layout
 
 ```
-src/
-  db/
-    schema.sql            DSQL-compatible DDL (UUIDv7 PKs, CREATE INDEX ASYNC)
-    transactions.ts       T1/T2/T3 + naive variant + reconciliation (the moat)
-    retry.ts              retryOnConflict (40001, full-jitter backoff)
-    race.ts               two-region race harness
-    errors.ts             ConflictError vs BlockedError (retry vs don't)
-    index.ts              backend selection + the two regional endpoints
-    dsql.ts               Aurora DSQL connection (IAM token signer)
-    backends/
-      memory.ts           in-process OCC engine (default)
-      sql.ts              postgres + DSQL backend (the real SQL)
-    types.ts              domain types + Repo/Backend contracts
-  lib/                    uuidv7, money, tiers, api helpers
-  data/seed.ts            deterministic seed (buyers, sellers, listings)
-  app/                    Next.js App Router — pages + API route handlers
-  components/             editorial-kinetic UI (trust panel, escrow motif, …)
-tests/                    vitest concurrency suite
-scripts/                  race / seed / apply-schema CLIs
-docs/                     ARCHITECTURE · DEMO · BLOG · SUBMISSION · diagram
+src/db/
+  schema.sql            DSQL DDL (UUIDv7 PKs, sharded buckets, CREATE INDEX ASYNC)
+  transactions.ts       T1 buy · T2 release/refund · T3 verify · T4 resale · naive · reconcile
+  retry.ts              retryOnConflict (40001, full-jitter, tuned for contention)
+  race.ts               two-region race harness
+  backends/memory.ts    in-process OCC engine (default)
+  backends/sql.ts       postgres + DSQL backend (the real SQL)
+  dsql.ts               Aurora DSQL connection (IAM token signer)
+  types.ts              domain types + Repo/Backend contracts
+src/lib/                uuidv7 · money · tiers (fan caps/fees) · api helpers
+src/data/seed.ts        events, sections (+ sharded buckets), fans, promoters, a resellable ticket
+src/app/                Next.js App Router — pages + API route handlers
+src/components/          seatmap, countdown, buy panel, escrow motif, throughput chart, …
+tests/                  vitest concurrency suite (18)
+scripts/                race · load · seed · smoke:dsql · apply-schema
+docs/                   ARCHITECTURE · DEMO · BLOG · SUBMISSION · architecture.svg
 ```
 
 ---
 
 ## Deploy to Vercel
 
-1. Import the repo on Vercel.
-2. Provision an Aurora DSQL multi-region cluster (`us-east-1` + `us-east-2`,
-   witness `us-west-2`) and apply the schema: `DB_BACKEND=dsql … npm run db:schema && npm run seed`.
-3. Set the env vars from `.env.example` (`DB_BACKEND=dsql`, the `DSQL_*` hosts,
-   and AWS IAM credentials) in the Vercel dashboard.
-4. Deploy. The route handlers read/write either regional endpoint with strong
-   consistency.
+Import the repo, provision a DSQL multi-region cluster (`us-east-1` + `us-west-2`, US witness), set `DB_BACKEND=dsql` + the `DSQL_*` hosts + AWS IAM creds in the dashboard, then `npm run db:schema && npm run seed`. Vercel's default function region (`iad1` = us-east-1) co-locates with the cluster. Use `dsql` (not `memory`) in production — the in-process engine is per-lambda.
 
-> The `memory` backend is per-process, so on Vercel's serverless runtime use
-> `DB_BACKEND=dsql` for cross-request persistence. (The race showpiece runs both
-> transactions inside one request, so it works on any backend.)
-
----
-
-## Documentation
-
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — DSQL deep-dive, OCC, the transactions, region facts, diagram
-- [docs/DEMO.md](docs/DEMO.md) — the < 3-minute demo script
-- [docs/BLOG.md](docs/BLOG.md) — "Building Dhamana on Aurora DSQL + Vercel" (bonus content piece)
-- [docs/SUBMISSION.md](docs/SUBMISSION.md) — Devpost checklist + writeup
-
-Database: **Amazon Aurora DSQL**. Built during the H0 submission period in a standalone repo. License: MIT.
+Database: **Amazon Aurora DSQL**. Built during the H0 submission period. License: MIT.

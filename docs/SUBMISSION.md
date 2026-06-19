@@ -1,81 +1,92 @@
 # Devpost submission
 
 ## Track
-**Monetizable B2C App**
+**Million-Scale Global App** (gaming / social / entertainment). Ticketing
+flash-drops are the canonical "millions race limited inventory, global,
+entertainment" story; the sharded counter + active-active multi-region make the
+scale claim real.
 
-## Database(s) used
-**Amazon Aurora DSQL** (multi-region: two strongly-consistent regional endpoints
-+ a log-only witness region).
+## Database
+**Amazon Aurora DSQL**, multi-region (two strongly-consistent regional endpoints
+`us-east-1` + `us-west-2`, plus a US witness).
 
 ## Inspiration
-Diaspora buyers want to buy directly from sellers back home, but the trade is
-low-trust and one-directional — the buyer pays first and hopes, and a "verified"
-badge is usually a cosmetic label with nothing enforcing it. We wanted to make
-trust and the money-guarantee things the *database* enforces, not things the
-application hopes to remember.
+Every painful ticketing failure — overselling a show, bots sweeping a drop, the
+same ticket sold to three people, refund leakage — is enforced today in fragile
+app code that bots route around and that diverges across regions. We wanted to
+make fairness something the *database* guarantees, at commit.
 
 ## What it does
-Dhamana is a cross-border marketplace that holds each payment in escrow (the
-*dhamana*) until delivery is confirmed, and gates each seller's capability on a
-first-class verification record. It runs on Aurora DSQL's two strongly-consistent
-regional endpoints so a buyer in one region and a seller in another read one
-truth. Under a concurrent two-region race it **cannot oversell inventory, cannot
-double-release escrow, and cannot grant a capability without a matching
-verification record** — enforced at commit.
+Verdict is a fair-drop ticketing engine. Under a flash-drop stampede it **cannot
+oversell a seat, cannot resell a ticket twice, and cannot let a fan buy without a
+verified-fan record** — enforced at COMMIT on Aurora DSQL across active-active
+regions, and it holds throughput at scale via a sharded inventory counter.
 
 ## How we built it
-- **Next.js (App Router) on Vercel** → serverless route handlers → **Aurora DSQL**
-  via `postgres.js` with **IAM auth tokens**.
-- **Three load-bearing transactions** (place-order+hold, release/refund,
-  verification decision), each wrapped in a **retry-on-`40001`** helper, written
-  once and run unchanged against three backends (in-process OCC engine /
-  Postgres `SERIALIZABLE` / Aurora DSQL).
-- **Designed around DSQL's real constraints from line one:** no FK/triggers/
-  sequences/`SERIAL`, OCC with commit-time `40001` conflicts, `FOR UPDATE` is a
-  no-op (we rely on the contended `UPDATE`), client-generated **UUIDv7** keys,
-  `CREATE INDEX ASYNC`, per-transaction and connection limits respected.
-- **Editorial-kinetic front-end** whose visual center is the trust tier and the
-  held escrow (a balance that settles on release), mirroring the data model.
+- **Next.js (App Router) on Vercel** → route handlers → **Aurora DSQL** via
+  `postgres.js` + IAM auth tokens.
+- **Four load-bearing transactions** (buy + hold, release/refund, verify,
+  escrowed resale) wrapped in retry-on-`40001`, written once and run on three
+  backends (in-process OCC engine / Postgres SERIALIZABLE / Aurora DSQL).
+- **Sharded inventory** (`section_stock_buckets`) so a single hot seat row doesn't
+  collapse under a stampede; a live throughput chart proves it.
+- **Designed around DSQL from line one:** OCC + commit-time `40001`, `FOR UPDATE`
+  is a no-op (we contend on the write), snapshot isolation permits write skew
+  (demoed), UUIDv7 keys, `CREATE INDEX ASYNC`, txn/connection limits, IAM tokens.
+- **Editorial-kinetic UI** where the front-end mirrors the back-end: the seatmap
+  is the contested row, the checkmark is the badge row, the resale slider hits a
+  DB-enforced cap, the escrow balance settles as the ledger reconciles.
 
 ## Challenges
-Making the consistency win *visible*. When strong consistency works, nothing
-happens — so we built a naive-vs-guarded toggle that manufactures the exact
-oversell DSQL prevents, then shows it prevented, reading final state from both
-endpoints.
+Making the consistency win visible (the naive-vs-guarded toggle), and discovering
+that snapshot isolation permits write skew — so the naive count-then-insert
+oversells even on DSQL until you contend on the shared row. That correction made
+the project sharper.
 
 ## Accomplishments
-A verification badge that is a database invariant rather than a UI label; a
-two-region race that provably fails safe; a reconciliation invariant
-(`held + Σrelease + Σrefund = Σhold`) that holds identically from either endpoint.
+Oversell, double-sale, and bot-sweep made architecturally impossible; a DB-enforced
+resale price cap; a reconciliation invariant that holds identically from either
+regional endpoint; and a measured scale story (1 hot bucket sheds buyers; 64
+buckets serve them all, zero oversell).
 
 ## What we learned
-DSQL rewards designing *with* OCC instead of porting Postgres habits — especially
-that `FOR UPDATE` doesn't lock and conflicts must be handled by retry.
+DSQL rewards designing *with* OCC: contend on the contested row, retry `40001`,
+shard hot counters, and never trust `FOR UPDATE`.
 
 ## What's next
-Real payment-rail and KYC integrations behind the same invariants; an
-`af-south-1` regional endpoint as DSQL multi-region coverage expands.
+Real identity/KYC behind the same gate; real payment rails behind the same escrow;
+an `af-south-1` endpoint as DSQL multi-region coverage expands.
 
 ## Mocked / out of scope (stated honestly)
-Payments & settlement (escrow is a ledger abstraction — no real money moves),
-identity/KYC (an `evidence_url` reference), currency conversion (single display
-currency, minor units). Out: real payment rails, AML/KYC, fraud scoring,
-logistics, messaging.
+Payments & settlement (escrow is a ledger abstraction), identity/KYC (an
+`evidence_url`), currency conversion (single display currency). We do not claim to
+stop off-platform scalping.
+
+## Other applications of the engine
+The same commit-time invariants power any contested-scarce-resource-at-scale market:
+- **Sneaker / streetwear flash drops** (~$10B+ resale GMV, 100k+ concurrent).
+- **Airline seat & hotel room inventory** (overbooking is a recurring scandal).
+- **Console / GPU restocks** (bot armies) — verified-buyer gate + sharded counter.
+- **Appointment & reservation systems** at national scale (no double-book).
+- **Carbon-credit / RWA registries** (no double-count, idempotent ledger).
+- **Limited digital collectibles** (no double-mint, without blockchain cost).
+- **Esports entry & scarce in-game items** (100M+ players, global drops).
+- **Government permit / benefit allocation** (legally-required fairness).
+- **Cross-border marketplace escrow** (verification-as-a-row across regions).
+- **Quota-bound governance voting** (no double-vote, no over-allocation).
 
 ---
 
 ## Submission checklist
-
-- [x] Track selected: **Monetizable B2C App**
+- [x] Track: **Million-Scale Global App**
 - [ ] Public Vercel deployment link (deploy with `DB_BACKEND=dsql`)
-- [ ] Demo video < 3 min on YouTube; explains the AWS database used — script in [DEMO.md](DEMO.md)
-- [x] Architecture diagram (app → two DSQL regional endpoints → cluster + witness) — [architecture.svg](architecture.svg)
+- [ ] Demo video < 3 min on YouTube; explains the AWS database — script in [DEMO.md](DEMO.md)
+- [x] Architecture diagram — [architecture.svg](architecture.svg)
 - [ ] Screenshot proving AWS DB usage (AWS console showing the DSQL cluster)
 - [ ] Vercel Team ID
 - [x] Database named: **Amazon Aurora DSQL**
 - [x] Text description (features + functionality) — above + [README](../README.md)
-- [x] New-work statement: built entirely during the submission period in a standalone repo
-- [x] Bonus content piece: [BLOG.md](BLOG.md) — includes the required hackathon line and **#H0Hackathon**
+- [x] New-work statement: built during the submission period in a standalone repo
+- [x] Bonus content piece: [BLOG.md](BLOG.md) — includes the hackathon line + **#H0Hackathon**
 
-> Items left unchecked require your AWS/Vercel/YouTube accounts and the recorded
-> video — everything that can be produced from the code is done.
+> Unchecked items require your AWS/Vercel/YouTube accounts and the recorded video.
