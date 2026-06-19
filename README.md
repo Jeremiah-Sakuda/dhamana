@@ -246,6 +246,5 @@ docs/                     ARCHITECTURE · DEMO · BLOG · SUBMISSION · diagram
 - [docs/DEMO.md](docs/DEMO.md) — the < 3-minute demo script
 - [docs/BLOG.md](docs/BLOG.md) — "Building Dhamana on Aurora DSQL + Vercel" (bonus content piece)
 - [docs/SUBMISSION.md](docs/SUBMISSION.md) — Devpost checklist + writeup
-- [docs/JUDGING.md](docs/JUDGING.md) — a 10-judge panel score + improvement plan
 
 Database: **Amazon Aurora DSQL**. Built during the H0 submission period in a standalone repo. License: MIT.
