@@ -30,7 +30,7 @@ function backoff(attempt: number, base: number, max: number): number {
  * Postgres SERIALIZABLE/deadlock). Business rejections (BlockedError) and any
  * other error propagate immediately and are NEVER retried.
  *
- * This is the single helper every write path in Dhamana flows through. It is
+ * This is the single helper every write path in Verdict flows through. It is
  * what lets the application "fail safe": the database does the arbitration, and
  * the loser simply tries again against fresh state.
  */

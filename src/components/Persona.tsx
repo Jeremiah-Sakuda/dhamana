@@ -27,7 +27,7 @@ const Ctx = createContext<PersonaCtx>({
   setCurrent: () => {},
 });
 
-const KEY = "dhamana.persona";
+const KEY = "verdict.persona";
 
 export function PersonaProvider({ children }: { children: ReactNode }) {
   const [buyers, setBuyers] = useState<Buyer[]>([]);

@@ -5,7 +5,7 @@ import type { Backend, BackendName } from "./types";
 /**
  * Backend selection + the two regional endpoints.
  *
- * Dhamana is active-active across two strongly-consistent regional endpoints of
+ * Verdict is active-active across two strongly-consistent regional endpoints of
  * ONE logical database. The race harness needs both endpoints; everyday reads
  * and writes use Region A.
  *
@@ -26,7 +26,7 @@ interface Endpoints {
   name: BackendName;
 }
 
-const GLOBAL_KEY = "__dhamana_db__";
+const GLOBAL_KEY = "__verdict_db__";
 type GlobalWithDb = typeof globalThis & { [GLOBAL_KEY]?: Promise<Endpoints> };
 
 function build(): Promise<Endpoints> {

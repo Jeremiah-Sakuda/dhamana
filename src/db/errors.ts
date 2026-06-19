@@ -1,5 +1,5 @@
 /**
- * Error taxonomy for Dhamana's data layer.
+ * Error taxonomy for Verdict's data layer.
  *
  * Two failure classes matter, and they are deliberately distinct:
  *
