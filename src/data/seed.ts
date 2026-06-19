@@ -189,8 +189,20 @@ export function seedData(): SeedData {
     },
   ];
 
-  // Backing verification records for the already-trusted sellers (audit trail).
+  // Backing verification records (audit trail). One PENDING request gives the
+  // reviewer console a live queue to act on.
   const verifications: Verification[] = [
+    {
+      id: "00000000-0000-7000-8000-0000000000d1",
+      seller_id: SELLER_WANJIRU_ID,
+      tier: "verified",
+      method: "doc_review",
+      evidence_url: "https://evidence.example/wanjiru-business-cert.pdf",
+      status: "pending",
+      reviewed_by: null,
+      created_at: T,
+      decided_at: null,
+    },
     {
       id: "00000000-0000-7000-8000-0000000000d2",
       seller_id: SELLER_ADAEZE_ID,

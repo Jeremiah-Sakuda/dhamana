@@ -43,6 +43,17 @@ export interface RaceReport {
   oversold: boolean;
   reconciliations: Reconciliation[];
   reconciliationOk: boolean;
+  /**
+   * System-level reconciliation: do the payments we're holding match the units
+   * that actually existed? Naive oversell makes this false (2 payments, 1 unit) —
+   * the literal "the books don't reconcile against inventory" claim.
+   */
+  systemReconciliation: {
+    unitsAvailable: number;
+    unitsCommitted: number;
+    paymentsHeld: number;
+    ok: boolean;
+  };
   outcomes: RaceOutcome[];
   summary: string;
 }
@@ -136,6 +147,12 @@ export async function runRace(opts: {
     oversold,
     reconciliations,
     reconciliationOk,
+    systemReconciliation: {
+      unitsAvailable: startInventory,
+      unitsCommitted: createdOrderIds.length,
+      paymentsHeld: createdOrderIds.length,
+      ok: createdOrderIds.length <= startInventory,
+    },
     outcomes,
     summary,
   };

@@ -1,12 +1,13 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { TierTag } from "@/components/ui";
-import { TIERS, nextTier } from "@/lib/tiers";
-import type { Seller, Tier } from "@/db/types";
+import { TierTag, Chip } from "@/components/ui";
+import { TIERS, nextTier, TIER_ORDER } from "@/lib/tiers";
+import type { Seller, Tier, Verification } from "@/db/types";
 
 export default function ReviewerPage() {
   const [sellers, setSellers] = useState<Seller[]>([]);
+  const [pending, setPending] = useState<Verification[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
 
@@ -14,7 +15,16 @@ export default function ReviewerPage() {
     fetch("/api/state")
       .then((r) => r.json())
       .then((d) => setSellers(d.sellers ?? []));
+    fetch("/api/verifications?status=pending")
+      .then((r) => r.json())
+      .then((d) => setPending(d.verifications ?? []));
   }, []);
+
+  const rank = (t: Tier) => TIER_ORDER.indexOf(t);
+  const sellerName = (id: string) =>
+    sellers.find((s) => s.user_id === id)?.business_name ?? id.slice(0, 8);
+  const sellerTier = (id: string): Tier =>
+    (sellers.find((s) => s.user_id === id)?.current_tier ?? "unverified") as Tier;
 
   useEffect(() => {
     load();
@@ -59,14 +69,61 @@ export default function ReviewerPage() {
       </p>
 
       {flash && (
-        <div className="verdict good" style={{ margin: "12px 0" }}>
+        <div className="verdict good" style={{ margin: "12px 0" }} role="status" aria-live="polite">
           {flash}
         </div>
       )}
 
       <div className="panel" style={{ marginTop: 12 }}>
+        <div className="panel-head between">
+          <span className="eyebrow">Pending verification requests</span>
+          <span className="note">{pending.length} in queue</span>
+        </div>
+        <div className="panel-body stack" style={{ ["--gap" as string]: "10px" }}>
+          {pending.length === 0 ? (
+            <p className="note" style={{ margin: 0 }}>No pending requests.</p>
+          ) : (
+            pending.map((v) => {
+              const resolved = rank(sellerTier(v.seller_id)) >= rank(v.tier);
+              return (
+                <div key={v.id} className="between wrap" style={{ gap: 10 }}>
+                  <div>
+                    <strong>{sellerName(v.seller_id)}</strong>{" "}
+                    <span className="note">requests {TIERS[v.tier].label}</span>
+                    <div className="note mono" style={{ fontSize: "0.78rem" }}>
+                      {v.method} · {v.evidence_url ? "evidence on file ✓" : "no evidence"}
+                    </div>
+                  </div>
+                  {resolved ? (
+                    <Chip status="ok">approved ✓</Chip>
+                  ) : (
+                    <div className="row" style={{ gap: 8 }}>
+                      <button
+                        className="btn btn-gold btn-sm"
+                        disabled={busy === v.seller_id}
+                        onClick={() => decide(v.seller_id, v.tier, "approved")}
+                      >
+                        Approve → {TIERS[v.tier].label}
+                      </button>
+                      <button
+                        className="btn btn-danger btn-sm"
+                        disabled={busy === v.seller_id}
+                        onClick={() => decide(v.seller_id, "unverified", "revoked")}
+                      >
+                        Decline
+                      </button>
+                    </div>
+                  )}
+                </div>
+              );
+            })
+          )}
+        </div>
+      </div>
+
+      <div className="panel" style={{ marginTop: 18 }}>
         <div className="panel-head">
-          <span className="eyebrow">Sellers</span>
+          <span className="eyebrow">All sellers</span>
         </div>
         <table className="ledger">
           <thead>

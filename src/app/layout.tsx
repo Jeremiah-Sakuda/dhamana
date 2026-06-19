@@ -3,6 +3,7 @@ import { Fraunces, Inter } from "next/font/google";
 import "./globals.css";
 import { Nav } from "@/components/Nav";
 import { PersonaProvider } from "@/components/Persona";
+import { BackendBadge } from "@/components/BackendBadge";
 
 const display = Fraunces({
   subsets: ["latin"],
@@ -46,7 +47,10 @@ export default function RootLayout({
                 Dhamana — escrow + verification as database invariants on Amazon
                 Aurora DSQL.
               </span>
-              <span className="mono">trust enforced at commit, not in the UI</span>
+              <span className="row wrap" style={{ gap: 12 }}>
+                <BackendBadge />
+                <span className="mono">trust enforced at commit, not in the UI</span>
+              </span>
             </div>
           </footer>
         </PersonaProvider>

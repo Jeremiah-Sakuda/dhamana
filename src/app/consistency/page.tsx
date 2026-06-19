@@ -23,6 +23,12 @@ interface Report {
   totalHeldCents: number;
   oversold: boolean;
   reconciliationOk: boolean;
+  systemReconciliation: {
+    unitsAvailable: number;
+    unitsCommitted: number;
+    paymentsHeld: number;
+    ok: boolean;
+  };
   outcomes: Outcome[];
   summary: string;
 }
@@ -94,7 +100,7 @@ export default function ConsistencyPage() {
       </div>
 
       {report && (
-        <div className="stack fade-in" style={{ ["--gap" as string]: "20px" }}>
+        <div className="stack fade-in" role="status" aria-live="polite" style={{ ["--gap" as string]: "20px" }}>
           {/* verdict */}
           <div className={`verdict ${report.oversold ? "bad" : "good"}`} style={{ fontSize: "1.02rem" }}>
             {report.oversold ? "❌ " : "✓ "}
@@ -173,6 +179,14 @@ export default function ConsistencyPage() {
                 <div className="kv">
                   <span className="k">Per-order reconciliation</span>
                   <span className="v">{report.reconciliationOk ? "balanced ✓" : "imbalanced ✗"}</span>
+                </div>
+                <div className="kv">
+                  <span className="k">Books vs inventory</span>
+                  <span className="v">
+                    {report.systemReconciliation.paymentsHeld} paid /{" "}
+                    {report.systemReconciliation.unitsAvailable} unit{" "}
+                    {report.systemReconciliation.ok ? "✓" : "✗ don't reconcile"}
+                  </span>
                 </div>
               </div>
             </div>
