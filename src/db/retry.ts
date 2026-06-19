@@ -38,9 +38,12 @@ export async function retryOnConflict<T>(
   fn: () => Promise<T>,
   opts: RetryOptions = {},
 ): Promise<RetryResult<T>> {
-  const maxAttempts = opts.maxAttempts ?? 8;
-  const baseDelayMs = opts.baseDelayMs ?? 5;
-  const maxDelayMs = opts.maxDelayMs ?? 200;
+  // Tuned for flash-drop contention: retry aggressively with short, jittered
+  // backoff. The real fix for a hot SKU is sharding the counter; this is the
+  // multiplier on top, not a substitute for it.
+  const maxAttempts = opts.maxAttempts ?? 12;
+  const baseDelayMs = opts.baseDelayMs ?? 2;
+  const maxDelayMs = opts.maxDelayMs ?? 60;
 
   let conflicts = 0;
   let lastErr: unknown;

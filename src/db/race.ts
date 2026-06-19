@@ -1,18 +1,13 @@
-import { getRegions, getBackendName, REGION_A_LABEL, REGION_B_LABEL } from "./index";
-import type { BackendName } from "./types";
-import { placeOrder, placeOrderNaive, reconcile, type Reconciliation } from "./transactions";
-import { BlockedError, isConflict } from "./errors";
-import { BUYER_AMARA_ID, BUYER_KWAME_ID, HERO_LISTING_ID } from "../data/seed";
-import type { Backend } from "./types";
+import { getRegions, getBackendName, REGION_A_LABEL, REGION_B_LABEL } from "./index.js";
+import { buyTickets, buyTicketsNaive, reconcile, type Reconciliation } from "./transactions.js";
+import { BlockedError, isConflict } from "./errors.js";
+import { FAN_AMARA_ID, FAN_KWAME_ID, HERO_SECTION_ID } from "../data/seed.js";
+import type { Backend, BackendName } from "./types.js";
 
 /**
- * The two-region race harness — the showpiece.
- *
- * Fires two concurrent place-order attempts at the SAME listing from the two
- * regional endpoints. In `guarded` mode (T1) exactly one can win; in `naive`
- * mode both "succeed" and oversell. The report is built to be legible to a
- * non-engineer: did we oversell, how many payments are held, do both endpoints
- * agree on the final state.
+ * The two-region race harness — the showpiece. Fires two concurrent buys at the
+ * same section from the two regional endpoints. Guarded (T1, contend on a stock
+ * bucket) cannot oversell; naive (count-then-insert) write-skews into oversell.
  */
 
 export type RaceMode = "naive" | "guarded";
@@ -25,37 +20,25 @@ export interface RaceOutcome {
   amountCents?: number;
   attempts: number;
   conflicts: number;
-  /** Why it failed: a business reason ('insufficient_inventory') or 'conflict'. */
   failure?: string;
 }
 
 export interface RaceReport {
   mode: RaceMode;
   backend: BackendName;
-  listingId: string;
+  sectionId: string;
   title: string;
-  startInventory: number;
-  endInventoryRegionA: number;
-  endInventoryRegionB: number;
-  /** Both endpoints must agree → strong consistency, no divergence. */
+  startRemaining: number;
+  endRemainingRegionA: number;
+  endRemainingRegionB: number;
   consistentAcrossRegions: boolean;
-  unitsSold: number;
   ordersCreated: number;
+  ticketsIssued: number;
   totalHeldCents: number;
   oversold: boolean;
   reconciliations: Reconciliation[];
   reconciliationOk: boolean;
-  /**
-   * System-level reconciliation: do the payments we're holding match the units
-   * that actually existed? Naive oversell makes this false (2 payments, 1 unit) —
-   * the literal "the books don't reconcile against inventory" claim.
-   */
-  systemReconciliation: {
-    unitsAvailable: number;
-    unitsCommitted: number;
-    paymentsHeld: number;
-    ok: boolean;
-  };
+  systemReconciliation: { seatsAvailable: number; ticketsIssued: number; ok: boolean };
   outcomes: RaceOutcome[];
   summary: string;
 }
@@ -66,102 +49,77 @@ async function attempt(
   region: string,
   buyer: string,
   buyerId: string,
-  listingId: string,
+  sectionId: string,
   qty: number,
 ): Promise<RaceOutcome> {
   try {
-    const fn = mode === "guarded" ? placeOrder : placeOrderNaive;
-    const r = await fn(backend, { buyerId, listingId, qty, buyerRegion: region });
-    return {
-      region,
-      buyer,
-      ok: true,
-      orderId: r.orderId,
-      amountCents: r.amountCents,
-      attempts: r.attempts,
-      conflicts: r.conflicts,
-    };
+    const fn = mode === "guarded" ? buyTickets : buyTicketsNaive;
+    const r = await fn(backend, { buyerId, sectionId, qty, buyerRegion: region });
+    return { region, buyer, ok: true, orderId: r.orderId, amountCents: r.amountCents, attempts: r.attempts, conflicts: r.conflicts };
   } catch (err) {
-    const failure =
-      err instanceof BlockedError ? err.reason : isConflict(err) ? "conflict" : "error";
-    const conflicts =
-      (err as { conflicts?: number })?.conflicts ?? (isConflict(err) ? 1 : 0);
+    const failure = err instanceof BlockedError ? err.reason : isConflict(err) ? "conflict" : "error";
+    const conflicts = (err as { conflicts?: number })?.conflicts ?? (isConflict(err) ? 1 : 0);
     return { region, buyer, ok: false, attempts: 1 + conflicts, conflicts, failure };
   }
 }
 
-export async function runRace(opts: {
-  mode: RaceMode;
-  listingId?: string;
-  qty?: number;
-}): Promise<RaceReport> {
-  const listingId = opts.listingId ?? HERO_LISTING_ID;
+export async function runRace(opts: { mode: RaceMode; sectionId?: string; qty?: number }): Promise<RaceReport> {
+  const sectionId = opts.sectionId ?? HERO_SECTION_ID;
   const qty = opts.qty ?? 1;
   const backend = await getBackendName();
   const { regionA, regionB } = await getRegions();
 
-  const before = await regionA.q.getListing(listingId);
-  const startInventory = before?.inventory_count ?? 0;
-  const title = before?.title ?? listingId;
+  const before = await regionA.q.getSection(sectionId);
+  const startRemaining = before?.remaining ?? 0;
+  const title = before ? `${before.event.name} — ${before.name}` : sectionId;
 
-  // Two buyers, two endpoints, fired concurrently at the same unit.
   const [a, b] = await Promise.all([
-    attempt(regionA, opts.mode, REGION_A_LABEL, "Amara", BUYER_AMARA_ID, listingId, qty),
-    attempt(regionB, opts.mode, REGION_B_LABEL, "Kwame", BUYER_KWAME_ID, listingId, qty),
+    attempt(regionA, opts.mode, REGION_A_LABEL, "Amara", FAN_AMARA_ID, sectionId, qty),
+    attempt(regionB, opts.mode, REGION_B_LABEL, "Kwame", FAN_KWAME_ID, sectionId, qty),
   ]);
   const outcomes = [a, b];
 
-  // Read final state from BOTH endpoints — they must agree.
-  const afterA = await regionA.q.getListing(listingId);
-  const afterB = await regionB.q.getListing(listingId);
-  const endInventoryRegionA = afterA?.inventory_count ?? 0;
-  const endInventoryRegionB = afterB?.inventory_count ?? 0;
+  const afterA = await regionA.q.getSection(sectionId);
+  const afterB = await regionB.q.getSection(sectionId);
+  const endRemainingRegionA = afterA?.remaining ?? 0;
+  const endRemainingRegionB = afterB?.remaining ?? 0;
 
   const createdOrderIds = outcomes.filter((o) => o.ok && o.orderId).map((o) => o.orderId!);
-  const reconciliations = await Promise.all(
-    createdOrderIds.map((id) => reconcile(regionA, id)),
-  );
+  const reconciliations = await Promise.all(createdOrderIds.map((id) => reconcile(regionA, id)));
   const totalHeldCents = reconciliations.reduce((s, r) => s + r.heldCents, 0);
-  // Units committed = orders created. Oversell = more orders than units available
-  // (write-skew naive never decrements), or a negative counter (decrement naive).
-  const unitsSold = createdOrderIds.length;
-  const oversold =
-    createdOrderIds.length > startInventory || endInventoryRegionA < 0;
-  const consistentAcrossRegions = endInventoryRegionA === endInventoryRegionB;
+  const ticketsIssued = (await regionA.q.listTicketsForSection(sectionId)).filter((t) => t.state !== "void").length;
+
+  const oversold = ticketsIssued > before!.seat_count || endRemainingRegionA < 0;
+  const consistentAcrossRegions = endRemainingRegionA === endRemainingRegionB;
   const reconciliationOk = reconciliations.every((r) => r.ok);
 
   const summary =
     opts.mode === "guarded"
       ? oversold
         ? "UNEXPECTED: guarded mode oversold"
-        : `Guarded: ${createdOrderIds.length} order committed for ${startInventory} unit, $${(totalHeldCents / 100).toFixed(2)} held. The loser hit 40001, retried, and failed safe.`
+        : `Guarded: ${createdOrderIds.length} order committed for ${before!.seat_count} seat${before!.seat_count === 1 ? "" : "s"}, $${(totalHeldCents / 100).toFixed(2)} held. The loser hit 40001, retried, and failed safe.`
       : oversold
-        ? `Naive: ${createdOrderIds.length} orders committed for ${startInventory} unit — $${(totalHeldCents / 100).toFixed(2)} held (write skew). The books no longer reconcile against inventory.`
+        ? `Naive: ${ticketsIssued} tickets issued for ${before!.seat_count} seat${before!.seat_count === 1 ? "" : "s"} — write skew. The books no longer reconcile against inventory.`
         : backend === "memory"
-          ? "Naive: the conflicting writes were serialized this run — fire again to catch the oversell window."
-          : "Naive: the database rejected the conflicting commit — no oversell. The same naive code oversells on a conventional single-region database (see the local in-process demo).";
+          ? "Naive: the writes serialized this run — fire again to catch the oversell window."
+          : "Naive: the database rejected the conflicting write this run — write skew is intermittent on DSQL; reliably reproduced on the in-process engine.";
 
   return {
     mode: opts.mode,
     backend,
-    listingId,
+    sectionId,
     title,
-    startInventory,
-    endInventoryRegionA,
-    endInventoryRegionB,
+    startRemaining,
+    endRemainingRegionA,
+    endRemainingRegionB,
     consistentAcrossRegions,
-    unitsSold,
     ordersCreated: createdOrderIds.length,
+    ticketsIssued,
     totalHeldCents,
     oversold,
     reconciliations,
     reconciliationOk,
-    systemReconciliation: {
-      unitsAvailable: startInventory,
-      unitsCommitted: createdOrderIds.length,
-      paymentsHeld: createdOrderIds.length,
-      ok: createdOrderIds.length <= startInventory,
-    },
+    systemReconciliation: { seatsAvailable: before!.seat_count, ticketsIssued, ok: ticketsIssued <= before!.seat_count },
     outcomes,
     summary,
   };

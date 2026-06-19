@@ -1,53 +1,53 @@
 -- ─────────────────────────────────────────────────────────────────────────────
--- Dhamana schema — designed for Amazon Aurora DSQL from line one.
+-- Verdict schema — the fair-drop engine, designed for Amazon Aurora DSQL.
 --
--- DSQL is NOT vanilla Postgres. This schema deliberately uses only what DSQL
--- supports, and pushes everything else into application transactions:
+-- DSQL is NOT vanilla Postgres. This schema uses only what DSQL supports and
+-- pushes everything else into the transactions:
+--   • No FOREIGN KEYS / TRIGGERS / SERIAL / sequences / PL-pgSQL.
+--   • No CHECK constraints (unconfirmed on DSQL) — "never below 0" and enums are
+--     enforced inside T1/T2/T3/T4.
+--   • Client-generated UUIDv7 primary keys (time-sortable, spread across the
+--     keyspace to avoid hot-key OCC contention).
+--   • Indexes built with CREATE INDEX ASYNC (non-blocking).
 --
---   • No FOREIGN KEYS      → referential integrity lives in T1/T2/T3.
---   • No TRIGGERS          → state transitions are explicit in the app.
---   • No SERIAL/SEQUENCES  → primary keys are client-generated UUIDv7
---                            (time-sortable, spread across the keyspace).
---   • No CHECK constraints → DSQL support is unconfirmed; every "never below 0"
---                            and enum rule is enforced inside the transaction.
---   • Only PRIMARY KEY / NOT NULL / UNIQUE are used.
---   • Indexes are built with CREATE INDEX ASYNC (non-blocking background build).
---
--- One database (`postgres`) per cluster; we use a schema for separation.
+-- Inventory is SHARDED: a section's seats live in N section_stock_buckets rows,
+-- so a flash-drop stampede spreads writes across N warm rows instead of
+-- collapsing on one hot counter. SUM(remaining_count) over a section = seats left.
 -- ─────────────────────────────────────────────────────────────────────────────
 
-CREATE SCHEMA IF NOT EXISTS dhamana;
+CREATE SCHEMA IF NOT EXISTS verdict;
 
--- Participants: buyers (diaspora), sellers (origin region), admins (reviewers).
-CREATE TABLE IF NOT EXISTS dhamana.users (
+-- Fans (buyers), promoters, admins (reviewers). fan_tier is the verified-fan
+-- level, written atomically with a verifications row in T3.
+CREATE TABLE IF NOT EXISTS verdict.users (
   id            uuid        NOT NULL,
-  role          text        NOT NULL,          -- 'buyer' | 'seller' | 'admin'
+  role          text        NOT NULL,          -- 'fan' | 'promoter' | 'admin'
   display_name  text        NOT NULL,
   email         text        NOT NULL,
   home_region   text        NOT NULL,
+  fan_tier      text        NOT NULL,          -- 'unverified' | 'verified' | 'trusted'
   created_at    timestamptz NOT NULL,
   PRIMARY KEY (id),
   UNIQUE (email)
 );
 
--- Seller profile. current_tier is a DENORMALIZED copy of the latest approved
--- verification — updated atomically with the verification record in T3 so the
--- capability the data path checks can never drift from the audit trail.
-CREATE TABLE IF NOT EXISTS dhamana.sellers (
-  user_id       uuid        NOT NULL,          -- == users.id where role='seller'
-  business_name text        NOT NULL,
+-- Promoter profile (role='promoter').
+CREATE TABLE IF NOT EXISTS verdict.promoters (
+  user_id       uuid        NOT NULL,
+  org_name      text        NOT NULL,
   country       text        NOT NULL,
-  current_tier  text        NOT NULL,          -- 'unverified' | 'verified' | 'trusted'
+  verified      boolean     NOT NULL,
   created_at    timestamptz NOT NULL,
   PRIMARY KEY (user_id)
 );
 
--- Append-only audit of every verification decision. The badge IS a row here.
-CREATE TABLE IF NOT EXISTS dhamana.verifications (
+-- Append-only audit of verification decisions (the badge IS a row).
+CREATE TABLE IF NOT EXISTS verdict.verifications (
   id            uuid        NOT NULL,
-  seller_id     uuid        NOT NULL,
-  tier          text        NOT NULL,          -- tier granted by this decision
-  method        text        NOT NULL,          -- e.g. 'doc_review'
+  subject_id    uuid        NOT NULL,          -- the user being verified
+  subject_kind  text        NOT NULL,          -- 'fan' | 'promoter'
+  tier          text        NOT NULL,          -- granted tier (fans)
+  method        text        NOT NULL,
   evidence_url  text,
   status        text        NOT NULL,          -- 'pending' | 'approved' | 'revoked'
   reviewed_by   uuid,
@@ -56,38 +56,59 @@ CREATE TABLE IF NOT EXISTS dhamana.verifications (
   PRIMARY KEY (id)
 );
 
--- Listings with FINITE inventory. inventory_count is the contested resource that
--- the two-region race fights over; it must never go below 0 (enforced in T1).
-CREATE TABLE IF NOT EXISTS dhamana.listings (
+CREATE TABLE IF NOT EXISTS verdict.events (
+  id            uuid        NOT NULL,
+  promoter_id   uuid        NOT NULL,
+  name          text        NOT NULL,
+  venue         text        NOT NULL,
+  starts_at     timestamptz NOT NULL,
+  status        text        NOT NULL,          -- 'onsale'|'scheduled'|'paused'|'completed'|'canceled'
+  created_at    timestamptz NOT NULL,
+  PRIMARY KEY (id)
+);
+
+-- A seating section of an event. seat_count is the immutable total; the live
+-- remaining count lives in section_stock_buckets (sharded).
+CREATE TABLE IF NOT EXISTS verdict.sections (
+  id            uuid        NOT NULL,
+  event_id      uuid        NOT NULL,
+  name          text        NOT NULL,
+  price_cents   bigint      NOT NULL,
+  currency      text        NOT NULL,
+  seat_count    int         NOT NULL,
+  status        text        NOT NULL,          -- 'active' | 'sold_out' | 'paused'
+  created_at    timestamptz NOT NULL,
+  PRIMARY KEY (id)
+);
+
+-- The SHARDED counter. One hot seat counter -> N warm buckets. T1 takes seats
+-- from a randomly chosen bucket (the contended write DSQL arbitrates at commit);
+-- SUM(remaining_count) per section_id = seats remaining.
+CREATE TABLE IF NOT EXISTS verdict.section_stock_buckets (
+  section_id      uuid      NOT NULL,
+  bucket_no       int       NOT NULL,
+  remaining_count int       NOT NULL,          -- never below 0 (enforced in T1)
+  PRIMARY KEY (section_id, bucket_no)
+);
+
+CREATE TABLE IF NOT EXISTS verdict.orders (
   id              uuid        NOT NULL,
-  seller_id       uuid        NOT NULL,
-  title           text        NOT NULL,
-  description     text,
-  price_cents     bigint      NOT NULL,
+  buyer_id        uuid        NOT NULL,
+  event_id        uuid        NOT NULL,
+  section_id      uuid        NOT NULL,
+  kind            text        NOT NULL,        -- 'primary' | 'resale'
+  qty             int         NOT NULL,
+  amount_cents    bigint      NOT NULL,
   currency        text        NOT NULL,
-  inventory_count int         NOT NULL,
-  status          text        NOT NULL,        -- 'active' | 'paused' | 'sold_out'
+  status          text        NOT NULL,        -- pending|escrowed|released|refunded|disputed
+  buyer_region    text        NOT NULL,
+  idempotency_key text,
   created_at      timestamptz NOT NULL,
+  updated_at      timestamptz NOT NULL,
   PRIMARY KEY (id)
 );
 
-CREATE TABLE IF NOT EXISTS dhamana.orders (
-  id           uuid        NOT NULL,
-  buyer_id     uuid        NOT NULL,
-  listing_id   uuid        NOT NULL,
-  seller_id    uuid        NOT NULL,
-  qty          int         NOT NULL,
-  amount_cents bigint      NOT NULL,
-  currency     text        NOT NULL,
-  status       text        NOT NULL,           -- pending|escrowed|released|refunded|disputed
-  buyer_region text        NOT NULL,
-  created_at   timestamptz NOT NULL,
-  updated_at   timestamptz NOT NULL,
-  PRIMARY KEY (id)
-);
-
--- Current escrow state per order (the live balance + lifecycle state).
-CREATE TABLE IF NOT EXISTS dhamana.escrow_accounts (
+CREATE TABLE IF NOT EXISTS verdict.escrow_accounts (
   order_id    uuid        NOT NULL,
   held_cents  bigint      NOT NULL,            -- never below 0 (enforced in T2)
   state       text        NOT NULL,            -- 'open' | 'settled' | 'refunded'
@@ -95,9 +116,9 @@ CREATE TABLE IF NOT EXISTS dhamana.escrow_accounts (
   PRIMARY KEY (order_id)
 );
 
--- Append-only escrow ledger. Reconciliation invariant (asserted in the demo):
---   for every order:  held_cents + Σ release + Σ refund  =  Σ hold
-CREATE TABLE IF NOT EXISTS dhamana.escrow_entries (
+-- Append-only escrow ledger. Reconciliation invariant (asserted in UI + tests):
+--   for every order:  held_cents + Σ release + Σ refund = Σ hold
+CREATE TABLE IF NOT EXISTS verdict.escrow_entries (
   id                  uuid        NOT NULL,
   order_id            uuid        NOT NULL,
   entry_type          text        NOT NULL,    -- 'hold' | 'release' | 'refund'
@@ -107,13 +128,30 @@ CREATE TABLE IF NOT EXISTS dhamana.escrow_entries (
   PRIMARY KEY (id)
 );
 
+-- A ticket is a CAPABILITY row: its holder + state move atomically in T4, so the
+-- same ticket can never be valid for two holders (anti double-sale).
+CREATE TABLE IF NOT EXISTS verdict.tickets (
+  id                     uuid        NOT NULL,
+  order_id               uuid        NOT NULL,
+  section_id             uuid        NOT NULL,
+  event_id               uuid        NOT NULL,
+  seat_label             text        NOT NULL,
+  holder_user_id         uuid        NOT NULL,
+  state                  text        NOT NULL, -- 'held' | 'valid' | 'resold' | 'void'
+  resale_price_cap_cents bigint      NOT NULL,
+  created_at             timestamptz NOT NULL,
+  PRIMARY KEY (id)
+);
+
 -- ── Secondary indexes (non-blocking async builds) ────────────────────────────
--- On DSQL these return a job_id immediately and build in the background; check
--- status via `SELECT * FROM sys.jobs WHERE job_id = '...'`. On vanilla Postgres
--- the apply-schema script rewrites "INDEX ASYNC" → "INDEX".
-CREATE INDEX ASYNC IF NOT EXISTS listings_seller_idx       ON dhamana.listings (seller_id);
-CREATE INDEX ASYNC IF NOT EXISTS orders_buyer_idx          ON dhamana.orders (buyer_id);
-CREATE INDEX ASYNC IF NOT EXISTS orders_listing_idx        ON dhamana.orders (listing_id);
-CREATE INDEX ASYNC IF NOT EXISTS orders_seller_idx         ON dhamana.orders (seller_id);
-CREATE INDEX ASYNC IF NOT EXISTS escrow_entries_order_idx  ON dhamana.escrow_entries (order_id);
-CREATE INDEX ASYNC IF NOT EXISTS verifications_seller_idx  ON dhamana.verifications (seller_id);
+CREATE INDEX ASYNC IF NOT EXISTS sections_event_idx        ON verdict.sections (event_id);
+CREATE INDEX ASYNC IF NOT EXISTS events_promoter_idx       ON verdict.events (promoter_id);
+CREATE INDEX ASYNC IF NOT EXISTS orders_buyer_idx          ON verdict.orders (buyer_id);
+CREATE INDEX ASYNC IF NOT EXISTS orders_event_idx          ON verdict.orders (event_id);
+CREATE INDEX ASYNC IF NOT EXISTS orders_section_idx        ON verdict.orders (section_id);
+CREATE INDEX ASYNC IF NOT EXISTS orders_idem_idx           ON verdict.orders (idempotency_key);
+CREATE INDEX ASYNC IF NOT EXISTS escrow_entries_order_idx  ON verdict.escrow_entries (order_id);
+CREATE INDEX ASYNC IF NOT EXISTS verifications_subject_idx ON verdict.verifications (subject_id);
+CREATE INDEX ASYNC IF NOT EXISTS tickets_holder_idx        ON verdict.tickets (holder_user_id);
+CREATE INDEX ASYNC IF NOT EXISTS tickets_section_idx       ON verdict.tickets (section_id);
+CREATE INDEX ASYNC IF NOT EXISTS tickets_event_idx         ON verdict.tickets (event_id);

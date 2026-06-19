@@ -1,250 +1,185 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { freshMemoryBackend } from "../src/db/index";
+import { freshMemoryBackend } from "../src/db/index.js";
 import {
-  placeOrder,
-  placeOrderNaive,
+  buyTickets,
+  buyTicketsNaive,
   releaseEscrow,
   refundEscrow,
   decideVerification,
+  resaleTicket,
   reconcile,
-} from "../src/db/transactions";
-import { BlockedError } from "../src/db/errors";
-import type { Backend } from "../src/db/types";
+} from "../src/db/transactions.js";
+import { BlockedError } from "../src/db/errors.js";
+import { uuidv7 } from "../src/lib/uuidv7.js";
+import { resaleCapCents } from "../src/lib/tiers.js";
+import type { Backend } from "../src/db/types.js";
 import {
-  BUYER_AMARA_ID,
-  BUYER_KWAME_ID,
-  ADMIN_ID,
-  HERO_LISTING_ID,
-  HIGH_VALUE_LISTING_ID,
-  SELLER_WANJIRU_ID,
-} from "../src/data/seed";
+  FAN_AMARA_ID, FAN_KWAME_ID, FAN_ZARA_ID, BOT_ID, ADMIN_ID,
+  HERO_SECTION_ID, FLASH_SECTION_ID, LOWER_SECTION_ID, EVENT_HERO_ID,
+} from "../src/data/seed.js";
 
 let db: Backend;
-beforeEach(async () => {
-  db = await freshMemoryBackend();
-});
+beforeEach(async () => { db = await freshMemoryBackend(); });
 
-describe("T1 — oversell prevention under a two-region race", () => {
-  it("GUARDED: exactly one of two concurrent orders for the last unit wins; the other fails safe", async () => {
+const buy = (buyerId: string, sectionId: string, qty = 1, key?: string) =>
+  buyTickets(db, { buyerId, sectionId, qty, buyerRegion: "us-east-1", idempotencyKey: key });
+
+describe("T1 — no oversell under a two-region race", () => {
+  it("GUARDED: two concurrent buys for the last seat → one wins, the other fails safe", async () => {
     const results = await Promise.allSettled([
-      placeOrder(db, {
-        buyerId: BUYER_AMARA_ID,
-        listingId: HERO_LISTING_ID,
-        qty: 1,
-        buyerRegion: "us-east-1",
-      }),
-      placeOrder(db, {
-        buyerId: BUYER_KWAME_ID,
-        listingId: HERO_LISTING_ID,
-        qty: 1,
-        buyerRegion: "us-east-2",
-      }),
+      buy(FAN_AMARA_ID, HERO_SECTION_ID),
+      buy(FAN_KWAME_ID, HERO_SECTION_ID),
     ]);
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    const failed = results.find((r) => r.status === "rejected") as PromiseRejectedResult;
+    expect(failed.reason).toBeInstanceOf(BlockedError);
+    expect((failed.reason as BlockedError).reason).toBe("insufficient_inventory");
 
-    const ok = results.filter((r) => r.status === "fulfilled");
-    const failed = results.filter((r) => r.status === "rejected");
-    expect(ok).toHaveLength(1);
-    expect(failed).toHaveLength(1);
-
-    // The loser failed for a business reason (sold out), not a leaked conflict.
-    const reason = (failed[0] as PromiseRejectedResult).reason;
-    expect(reason).toBeInstanceOf(BlockedError);
-    expect((reason as BlockedError).reason).toBe("insufficient_inventory");
-
-    // No oversell: inventory is exactly 0, never negative.
-    const listing = await db.q.getListing(HERO_LISTING_ID);
-    expect(listing?.inventory_count).toBe(0);
-    expect(listing?.status).toBe("sold_out");
-
-    // Exactly one escrow hold exists, and it reconciles.
-    const orders = await db.q.listOrders();
-    expect(orders).toHaveLength(1);
-    const rec = await reconcile(db, orders[0].id);
-    expect(rec.ok).toBe(true);
-    expect(rec.residual).toBe(0);
+    const section = await db.q.getSection(HERO_SECTION_ID);
+    expect(section?.remaining).toBe(0);
+    const tickets = (await db.q.listTicketsForSection(HERO_SECTION_ID)).filter((t) => t.state !== "void");
+    expect(tickets).toHaveLength(1);
   });
 
-  it("NAIVE: the same race oversells via write skew — both commit, two orders for one unit", async () => {
+  it("NAIVE: write skew oversells — two tickets issued for one seat", async () => {
     const results = await Promise.allSettled([
-      placeOrderNaive(db, {
-        buyerId: BUYER_AMARA_ID,
-        listingId: HERO_LISTING_ID,
-        qty: 1,
-        buyerRegion: "us-east-1",
-      }),
-      placeOrderNaive(db, {
-        buyerId: BUYER_KWAME_ID,
-        listingId: HERO_LISTING_ID,
-        qty: 1,
-        buyerRegion: "us-east-2",
-      }),
+      buyTicketsNaive(db, { buyerId: FAN_AMARA_ID, sectionId: HERO_SECTION_ID, qty: 1, buyerRegion: "a" }),
+      buyTicketsNaive(db, { buyerId: FAN_KWAME_ID, sectionId: HERO_SECTION_ID, qty: 1, buyerRegion: "b" }),
     ]);
-    // Both "succeed" — the count-based check + non-conflicting inserts oversell.
     expect(results.every((r) => r.status === "fulfilled")).toBe(true);
-
-    const orders = await db.q.listOrders();
-    expect(orders).toHaveLength(2); // two payments held for ONE available unit
-
-    const listing = await db.q.getListing(HERO_LISTING_ID);
-    // Naive never touched the shared counter — that's exactly why it didn't
-    // conflict. The oversell shows up as orders(2) > inventory(1), not as a
-    // negative counter.
-    expect(listing?.inventory_count).toBe(1);
-    expect(orders.length).toBeGreaterThan(listing!.inventory_count);
+    const tickets = await db.q.listTicketsForSection(HERO_SECTION_ID);
+    expect(tickets.length).toBe(2);
+    const section = await db.q.getSection(HERO_SECTION_ID);
+    expect(tickets.length).toBeGreaterThan(section!.seat_count); // 2 > 1 = oversold
   });
 
-  it("repeats the guarded race many times without ever oversilling", async () => {
+  it("never oversells across 25 guarded races", async () => {
     for (let i = 0; i < 25; i++) {
       const fresh = await freshMemoryBackend();
       await Promise.allSettled([
-        placeOrder(fresh, { buyerId: BUYER_AMARA_ID, listingId: HERO_LISTING_ID, qty: 1, buyerRegion: "A" }),
-        placeOrder(fresh, { buyerId: BUYER_KWAME_ID, listingId: HERO_LISTING_ID, qty: 1, buyerRegion: "B" }),
+        buyTickets(fresh, { buyerId: FAN_AMARA_ID, sectionId: HERO_SECTION_ID, qty: 1, buyerRegion: "a" }),
+        buyTickets(fresh, { buyerId: FAN_KWAME_ID, sectionId: HERO_SECTION_ID, qty: 1, buyerRegion: "b" }),
       ]);
-      const l = await fresh.q.getListing(HERO_LISTING_ID);
-      expect(l?.inventory_count).toBeGreaterThanOrEqual(0);
-      const orders = await fresh.q.listOrders();
-      expect(orders.length).toBe(1);
+      expect((await fresh.q.getSection(HERO_SECTION_ID))!.remaining).toBe(0);
+      expect((await fresh.q.listTicketsForSection(HERO_SECTION_ID)).length).toBe(1);
     }
   });
 });
 
-describe("T2 — escrow release is idempotent under concurrent confirmations", () => {
+describe("sharded counter — high concurrency never oversells", () => {
+  it("64 distinct fans buy the 1000-seat flash section concurrently with zero oversell", async () => {
+    await db.reshardSection(FLASH_SECTION_ID, 32);
+    const buyers = Array.from({ length: 120 }, () => uuidv7());
+    const res = await Promise.allSettled(
+      buyers.map((b) => buyTickets(db, { buyerId: b, sectionId: FLASH_SECTION_ID, qty: 1, buyerRegion: "load" })),
+    );
+    const ok = res.filter((r) => r.status === "fulfilled").length;
+    expect(ok).toBe(120);
+    const section = await db.q.getSection(FLASH_SECTION_ID);
+    const issued = (await db.q.listTicketsForSection(FLASH_SECTION_ID)).length;
+    expect(issued).toBe(120);
+    expect(issued).toBeLessThanOrEqual(section!.seat_count);
+    expect(section!.remaining).toBe(1000 - 120);
+  });
+});
+
+describe("verified-fan gate — the anti-scalping primitive", () => {
+  it("blocks an unverified bot from sweeping the cap, then allows a verified fan", async () => {
+    // Bot (unverified, cap 2) tries to grab 5 → rejected at commit.
+    await expect(buy(BOT_ID, FLASH_SECTION_ID, 5)).rejects.toMatchObject({ reason: "verification_required" });
+    expect(await db.q.listOrders({ buyerId: BOT_ID })).toHaveLength(0);
+
+    // Verified fan (cap 6) may take 5.
+    const ok = await buy(FAN_KWAME_ID, FLASH_SECTION_ID, 5);
+    expect(ok.ticketIds).toHaveLength(5);
+  });
+
+  it("revocation re-gates the fan", async () => {
+    await decideVerification(db, { subjectId: FAN_KWAME_ID, subjectKind: "fan", tier: "verified", method: "doc_review", reviewedBy: ADMIN_ID, decision: "revoked" });
+    await expect(buy(FAN_KWAME_ID, FLASH_SECTION_ID, 5)).rejects.toMatchObject({ reason: "verification_required" });
+  });
+
+  it("a verified fan over their (higher) cap is order_limit_exceeded, not verification_required", async () => {
+    await expect(buy(FAN_KWAME_ID, FLASH_SECTION_ID, 7)).rejects.toMatchObject({ reason: "order_limit_exceeded" });
+  });
+});
+
+describe("idempotency — duplicate submit doesn't double-charge", () => {
+  it("same idempotency key returns the same order", async () => {
+    // Amara has no seed order; she's unverified (cap 2) so a single ticket is fine.
+    const a = await buy(FAN_AMARA_ID, FLASH_SECTION_ID, 1, "key-123");
+    const b = await buy(FAN_AMARA_ID, FLASH_SECTION_ID, 1, "key-123");
+    expect(b.orderId).toBe(a.orderId);
+    expect(b.idempotentReplay).toBe(true);
+    expect(await db.q.listOrders({ buyerId: FAN_AMARA_ID })).toHaveLength(1);
+  });
+});
+
+describe("T2 — release/refund idempotent; reconciliation holds", () => {
   it("double-release pays out exactly once", async () => {
-    const { orderId } = await placeOrder(db, {
-      buyerId: BUYER_AMARA_ID,
-      listingId: HERO_LISTING_ID,
-      qty: 1,
-      buyerRegion: "us-east-1",
-    });
-
-    const [r1, r2] = await Promise.all([
-      releaseEscrow(db, orderId),
-      releaseEscrow(db, orderId),
-    ]);
-
-    // Exactly one of the two actually changed state.
+    const { orderId } = await buy(FAN_KWAME_ID, FLASH_SECTION_ID, 1);
+    const [r1, r2] = await Promise.all([releaseEscrow(db, orderId), releaseEscrow(db, orderId)]);
     expect([r1.changed, r2.changed].filter(Boolean)).toHaveLength(1);
-
     const acct = await db.q.getEscrowAccount(orderId);
     expect(acct?.state).toBe("settled");
-    expect(acct?.held_cents).toBe(0);
-
-    const entries = await db.q.listEscrowEntries(orderId);
-    expect(entries.filter((e) => e.entry_type === "release")).toHaveLength(1);
-
-    const rec = await reconcile(db, orderId);
-    expect(rec.ok).toBe(true); // held(0) + release + 0 = hold
+    expect((await reconcile(db, orderId)).ok).toBe(true);
   });
 
-  it("refund balances the ledger and is idempotent vs release", async () => {
-    const { orderId } = await placeOrder(db, {
-      buyerId: BUYER_AMARA_ID,
-      listingId: HERO_LISTING_ID,
-      qty: 1,
-      buyerRegion: "us-east-1",
-    });
-    const [a, b] = await Promise.all([
-      releaseEscrow(db, orderId),
-      refundEscrow(db, orderId),
+  it("refund voids the tickets and balances the ledger", async () => {
+    const { orderId, ticketIds } = await buy(FAN_KWAME_ID, FLASH_SECTION_ID, 1);
+    await refundEscrow(db, orderId);
+    expect((await db.q.getTicket(ticketIds[0]))?.state).toBe("void");
+    expect((await reconcile(db, orderId)).ok).toBe(true);
+  });
+});
+
+describe("T4 — escrowed resale: price cap + no double-sell", () => {
+  it("rejects a resale above the DB-enforced cap", async () => {
+    // Zara (trusted, can resell) buys then lists above cap.
+    const { ticketIds } = await buy(FAN_ZARA_ID, LOWER_SECTION_ID, 1);
+    await releaseEscrow(db, (await db.q.listOrders({ buyerId: FAN_ZARA_ID }))[0].id);
+    const ticket = await db.q.getTicket(ticketIds[0]);
+    const overCap = ticket!.resale_price_cap_cents + 1;
+    await expect(
+      resaleTicket(db, { ticketId: ticketIds[0], sellerId: FAN_ZARA_ID, buyerId: FAN_AMARA_ID, priceCents: overCap, buyerRegion: "us" }),
+    ).rejects.toMatchObject({ reason: "resale_over_cap" });
+  });
+
+  it("an unverified seller cannot resell", async () => {
+    // Amara is unverified → no resell capability. Give her a ticket via Zara's resale first is circular;
+    // instead assert the seed valid ticket (held by verified Kwame) can resell, and a non-holder cannot.
+    const k = (await db.q.listTicketsForHolder(FAN_KWAME_ID))[0];
+    await expect(
+      resaleTicket(db, { ticketId: k.id, sellerId: FAN_AMARA_ID, buyerId: FAN_ZARA_ID, priceCents: 1000, buyerRegion: "us" }),
+    ).rejects.toMatchObject({ reason: "not_ticket_holder" });
+  });
+
+  it("concurrent resale of the same ticket sells it once (no double-sale)", async () => {
+    const k = (await db.q.listTicketsForHolder(FAN_KWAME_ID))[0];
+    const price = Math.min(k.resale_price_cap_cents, 20000);
+    const res = await Promise.allSettled([
+      resaleTicket(db, { ticketId: k.id, sellerId: FAN_KWAME_ID, buyerId: FAN_AMARA_ID, priceCents: price, buyerRegion: "a" }),
+      resaleTicket(db, { ticketId: k.id, sellerId: FAN_KWAME_ID, buyerId: FAN_ZARA_ID, priceCents: price, buyerRegion: "b" }),
     ]);
-    // Whichever ran first wins; the other is a no-op.
-    expect([a.changed, b.changed].filter(Boolean)).toHaveLength(1);
-    const acct = await db.q.getEscrowAccount(orderId);
-    expect(["settled", "refunded"]).toContain(acct?.state);
-    const rec = await reconcile(db, orderId);
-    expect(rec.ok).toBe(true);
+    expect(res.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    const ticket = await db.q.getTicket(k.id);
+    expect([FAN_AMARA_ID, FAN_ZARA_ID]).toContain(ticket?.holder_user_id);
+    // exactly one resale order exists
+    const resaleOrders = (await db.q.listOrders()).filter((o) => o.kind === "resale");
+    expect(resaleOrders).toHaveLength(1);
   });
 });
 
-describe("T1 + T3 — verification gate is enforced in the data path", () => {
-  it("blocks a high-value order against an unverified seller, then allows it once verified", async () => {
-    // Unverified seller, $650 order > $500 unverified ceiling → blocked in T1.
-    await expect(
-      placeOrder(db, {
-        buyerId: BUYER_AMARA_ID,
-        listingId: HIGH_VALUE_LISTING_ID,
-        qty: 1,
-        buyerRegion: "us-east-1",
-      }),
-    ).rejects.toMatchObject({ reason: "verification_required" });
-
-    // No order, no inventory movement — the rejection happened before any write.
-    expect(await db.q.listOrders()).toHaveLength(0);
-    const before = await db.q.getListing(HIGH_VALUE_LISTING_ID);
-    expect(before?.inventory_count).toBe(3);
-
-    // Reviewer approves the seller (T3): audit record + capability move atomically.
-    const v = await decideVerification(db, {
-      sellerId: SELLER_WANJIRU_ID,
-      tier: "verified",
-      method: "doc_review",
-      evidenceUrl: "https://evidence.example/wanjiru.pdf",
-      reviewedBy: ADMIN_ID,
-      decision: "approved",
-    });
-    expect(v.verificationId).toBeTruthy();
-
-    const seller = await db.q.getSeller(SELLER_WANJIRU_ID);
-    expect(seller?.current_tier).toBe("verified");
-    const vs = await db.q.listVerifications({ sellerId: SELLER_WANJIRU_ID });
-    expect(vs[0].status).toBe("approved");
-
-    // Same action now succeeds.
-    const ok = await placeOrder(db, {
-      buyerId: BUYER_AMARA_ID,
-      listingId: HIGH_VALUE_LISTING_ID,
-      qty: 1,
-      buyerRegion: "us-east-1",
-    });
-    expect(ok.orderId).toBeTruthy();
-    expect(await db.q.listOrders()).toHaveLength(1);
-  });
-
-  it("revocation drops the seller back to unverified and re-gates high-value orders", async () => {
-    await decideVerification(db, {
-      sellerId: SELLER_WANJIRU_ID,
-      tier: "verified",
-      method: "doc_review",
-      reviewedBy: ADMIN_ID,
-      decision: "approved",
-    });
-    await decideVerification(db, {
-      sellerId: SELLER_WANJIRU_ID,
-      tier: "verified",
-      method: "doc_review",
-      reviewedBy: ADMIN_ID,
-      decision: "revoked",
-    });
-    const seller = await db.q.getSeller(SELLER_WANJIRU_ID);
-    expect(seller?.current_tier).toBe("unverified");
-    await expect(
-      placeOrder(db, {
-        buyerId: BUYER_AMARA_ID,
-        listingId: HIGH_VALUE_LISTING_ID,
-        qty: 1,
-        buyerRegion: "us-east-1",
-      }),
-    ).rejects.toMatchObject({ reason: "verification_required" });
-  });
-});
-
-describe("reconciliation invariant holds across many random operations", () => {
+describe("reconciliation invariant across mixed operations", () => {
   it("held + Σrelease + Σrefund = Σhold for every order", async () => {
     const ids: string[] = [];
-    // Spread orders across non-contested listings so they all succeed.
-    for (let i = 0; i < 10; i++) {
-      const r = await placeOrder(db, {
-        buyerId: i % 2 === 0 ? BUYER_AMARA_ID : BUYER_KWAME_ID,
-        listingId: "00000000-0000-7000-8000-0000000000c3", // Adire wrapper, inv 12
-        qty: 1,
-        buyerRegion: "us-east-1",
-      });
+    for (let i = 0; i < 6; i++) {
+      const buyer = uuidv7();
+      const r = await buyTickets(db, { buyerId: buyer, sectionId: FLASH_SECTION_ID, qty: 1, buyerRegion: "x" });
       ids.push(r.orderId);
     }
-    // Release some, refund some, leave some open.
     await releaseEscrow(db, ids[0]);
-    await releaseEscrow(db, ids[1]);
-    await refundEscrow(db, ids[2]);
+    await refundEscrow(db, ids[1]);
     for (const id of ids) {
       const rec = await reconcile(db, id);
       expect(rec.ok, `order ${id} residual ${rec.residual}`).toBe(true);

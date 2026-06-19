@@ -1,252 +1,189 @@
-import { BlockedError } from "./errors";
-import { retryOnConflict, type RetryOptions } from "./retry";
-import { uuidv7 } from "../lib/uuidv7";
-import { TIERS } from "../lib/tiers";
-import type {
-  Backend,
-  EscrowEntry,
-  Order,
-  Tier,
-} from "./types";
+import { BlockedError } from "./errors.js";
+import { retryOnConflict, type RetryOptions } from "./retry.js";
+import { uuidv7 } from "../lib/uuidv7.js";
+import { TIERS, resaleCapCents, platformFeeCents, RESALE_SPREAD_BPS } from "../lib/tiers.js";
+import type { Backend, EscrowEntry, FanTier, Order, Ticket } from "./types.js";
 
 /**
- * The three load-bearing transactions, written ONCE against the Repo interface
- * and run unchanged on memory / postgres / DSQL. Each guarded path flows through
- * retryOnConflict, so a commit-time 40001 is retried against fresh state and the
- * application "fails safe" without the developer hand-writing conflict handling
- * at every call site.
+ * Verdict's load-bearing transactions, written once against the Repo interface
+ * and run unchanged on memory / postgres / DSQL. Every guarded path flows through
+ * retryOnConflict, so a commit-time 40001 retries against fresh state and the app
+ * fails safe without hand-written conflict handling at each call site.
  */
 
-const env = (k: string, d: number) => Number(process.env[k] ?? d);
-
-export interface PlaceOrderInput {
+export interface BuyInput {
   buyerId: string;
-  listingId: string;
+  sectionId: string;
   qty: number;
   buyerRegion: string;
+  idempotencyKey?: string | null;
 }
-
-export interface PlaceOrderResult {
+export interface BuyResult {
   orderId: string;
   amountCents: number;
+  ticketIds: string[];
   attempts: number;
   conflicts: number;
+  idempotentReplay?: boolean;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// T1 — Place order + hold escrow (atomic, conflict-guarded)
+// T1 — BUY TICKETS + HOLD ESCROW (no oversell + verified-fan gate, atomic)
 //
-// This is where oversell AND the verification gate are both prevented, in ONE
-// transaction. Two regions racing the last unit: one commits; the other's
-// inventory UPDATE conflicts at commit (40001) → retry → sees sold_out → clean
-// BlockedError. No oversell, ever.
+// The verified-fan gate is on the BUYER: a fan may hold at most TIER.maxPerEvent
+// tickets per event, enforced inside the same transaction that issues them — so a
+// bot sweeping inventory is rejected at COMMIT, not throttled in app code. The
+// contended write is takeFromBucket: two buyers hitting the same stock bucket
+// conflict (40001); one wins, the other retries against fresh state. Sharding
+// means buyers hitting DIFFERENT buckets never conflict.
 // ─────────────────────────────────────────────────────────────────────────────
-export async function placeOrder(
+export async function buyTickets(
   backend: Backend,
-  input: PlaceOrderInput,
+  input: BuyInput,
   retry?: RetryOptions,
-): Promise<PlaceOrderResult> {
-  const { buyerId, listingId, qty, buyerRegion } = input;
+): Promise<BuyResult> {
+  const { buyerId, sectionId, qty, buyerRegion } = input;
+  const key = input.idempotencyKey ?? null;
   let amountCents = 0;
-  // Track conflicts so the demo can show "the loser hit 40001 and retried" even
-  // when the retry ultimately ends in a clean BlockedError (sold out).
+  let ticketIds: string[] = [];
+  let idempotentReplay = false;
   let conflictsSeen = 0;
 
   let result;
   try {
     result = await retryOnConflict(
-    () =>
-      backend.transaction(async (tx) => {
-        const listing = await backend.repo.readListingForUpdate(tx, listingId);
-        if (!listing) throw new BlockedError("listing_not_found");
-        if (listing.status !== "active" && listing.status !== "sold_out") {
-          throw new BlockedError("listing_inactive");
-        }
+      () =>
+        backend.transaction(async (tx) => {
+          // Idempotency: a duplicate submission after a lost response returns the
+          // original order instead of creating a second one.
+          if (key) {
+            const existing = await backend.repo.findOrderByIdempotencyKey(tx, key);
+            if (existing) {
+              idempotentReplay = true;
+              amountCents = existing.amount_cents;
+              return existing.id;
+            }
+          }
 
-        const tier =
-          (await backend.repo.readSellerTier(tx, listing.seller_id)) ?? null;
-        if (!tier) throw new BlockedError("seller_not_found");
+          const section = await backend.repo.readSectionForUpdate(tx, sectionId);
+          if (!section) throw new BlockedError("section_not_found");
+          if (section.status === "paused") throw new BlockedError("section_inactive");
 
-        amountCents = listing.price_cents * qty;
+          const tier: FanTier = (await backend.repo.readFanTier(tx, buyerId)) ?? "unverified";
 
-        // ── Trust enforced in the data path ──────────────────────────────────
-        // The tier's order ceiling is checked HERE, inside the same transaction
-        // that would create the order. An unverified seller over the ceiling is
-        // rejected with the actionable reason.
-        const cap =
-          tier === "unverified"
-            ? env("HIGH_VALUE_THRESHOLD_CENTS", TIERS.unverified.maxOrderCents)
-            : TIERS[tier].maxOrderCents;
-        if (amountCents > cap) {
-          throw new BlockedError(
-            tier === "unverified" ? "verification_required" : "order_limit_exceeded",
-          );
-        }
+          // ── Verified-fan gate in the data path ────────────────────────────
+          const cap = TIERS[tier].maxPerEvent;
+          const held = await backend.repo.countBuyerTicketsForEvent(tx, buyerId, section.event_id);
+          if (held + qty > cap) {
+            throw new BlockedError(tier === "unverified" ? "verification_required" : "order_limit_exceeded");
+          }
 
-        // ── Inventory invariant (never below 0) ──────────────────────────────
-        if (listing.inventory_count < qty) {
-          throw new BlockedError("insufficient_inventory");
-        }
+          // ── No oversell ───────────────────────────────────────────────────
+          const remaining = await backend.repo.sumSectionRemaining(tx, sectionId);
+          if (remaining < qty) throw new BlockedError("insufficient_inventory");
 
-        const orderId = uuidv7();
-        const ts = new Date().toISOString();
+          amountCents = section.price_cents * qty;
 
-        // The contested UPDATE — the conflict point the database arbitrates.
-        await backend.repo.decrementInventory(tx, listingId, qty);
+          // The contended write — the conflict point DSQL arbitrates at commit.
+          const took = await backend.repo.takeFromBucket(tx, sectionId, qty);
+          if (!took) throw new BlockedError("insufficient_inventory");
 
-        const order: Order = {
-          id: orderId,
-          buyer_id: buyerId,
-          listing_id: listingId,
-          seller_id: listing.seller_id,
-          qty,
-          amount_cents: amountCents,
-          currency: listing.currency,
-          status: "escrowed",
-          buyer_region: buyerRegion,
-          created_at: ts,
-          updated_at: ts,
-        };
-        await backend.repo.insertOrder(tx, order);
+          const orderId = uuidv7();
+          const ts = new Date().toISOString();
+          const order: Order = {
+            id: orderId, buyer_id: buyerId, event_id: section.event_id, section_id: sectionId,
+            kind: "primary", qty, amount_cents: amountCents, currency: section.currency,
+            status: "escrowed", buyer_region: buyerRegion, idempotency_key: key,
+            created_at: ts, updated_at: ts,
+          };
+          await backend.repo.insertOrder(tx, order);
+          await backend.repo.insertEscrowAccount(tx, { order_id: orderId, held_cents: amountCents, state: "open", updated_at: ts });
+          const hold: EscrowEntry = { id: uuidv7(), order_id: orderId, entry_type: "hold", amount_cents: amountCents, balance_after_cents: amountCents, created_at: ts };
+          await backend.repo.insertEscrowEntry(tx, hold);
 
-        await backend.repo.insertEscrowAccount(tx, {
-          order_id: orderId,
-          held_cents: amountCents,
-          state: "open",
-          updated_at: ts,
-        });
+          ticketIds = [];
+          for (let i = 0; i < qty; i++) {
+            const tid = uuidv7();
+            ticketIds.push(tid);
+            const ticket: Ticket = {
+              id: tid, order_id: orderId, section_id: sectionId, event_id: section.event_id,
+              seat_label: `${section.id.slice(0, 4).toUpperCase()}-${(held + i + 1).toString().padStart(3, "0")}`,
+              holder_user_id: buyerId, state: "valid",
+              resale_price_cap_cents: resaleCapCents(section.price_cents), created_at: ts,
+            };
+            await backend.repo.insertTicket(tx, ticket);
+          }
 
-        const hold: EscrowEntry = {
-          id: uuidv7(),
-          order_id: orderId,
-          entry_type: "hold",
-          amount_cents: amountCents,
-          balance_after_cents: amountCents,
-          created_at: ts,
-        };
-        await backend.repo.insertEscrowEntry(tx, hold);
-
-        return orderId;
-      }),
+          if (remaining - qty <= 0) await backend.repo.setSectionStatus(tx, sectionId, "sold_out");
+          return orderId;
+        }),
       { ...retry, onRetry: (a, e) => { conflictsSeen++; retry?.onRetry?.(a, e); } },
     );
   } catch (err) {
-    if (err instanceof BlockedError) {
-      (err as BlockedError & { conflicts?: number }).conflicts = conflictsSeen;
-    }
+    if (err instanceof BlockedError) (err as BlockedError & { conflicts?: number }).conflicts = conflictsSeen;
     throw err;
   }
 
-  return {
-    orderId: result.value,
-    amountCents,
-    attempts: result.attempts,
-    conflicts: result.conflicts,
-  };
+  return { orderId: result.value, amountCents, ticketIds, attempts: result.attempts, conflicts: result.conflicts, idempotentReplay };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// NAIVE place order — deliberately broken, for the demo contrast.
+// NAIVE buy — deliberately broken (write skew), for the demo contrast.
 //
-// The realistic anti-pattern: "check" availability by COUNTING existing orders
-// (a predicate read), then INSERT a new order — across SEPARATE auto-committed
-// statements, with NO retry and NO contention on a shared counter row. Two of
-// these racing the last unit both count 0 orders, both pass the check, and both
-// INSERT — to DIFFERENT rows, so nothing conflicts. The result is OVERSELL: two
-// orders (two held payments) for one available unit.
-//
-// This is a textbook WRITE SKEW that snapshot isolation permits — and it
-// oversells even on Amazon Aurora DSQL, because the concurrent writes never
-// touch the same row. The guarded path (T1) fixes it by decrementing the shared
-// listing row, turning the race into a write-write conflict the database rejects
-// at commit. Same database, same data — the difference is whether the app makes
-// the contention visible to the engine.
+// "Checks" availability by COUNTING orders (a predicate read), then inserts an
+// order + tickets WITHOUT taking from a shared bucket. Two concurrent buyers both
+// count below capacity and both insert to DIFFERENT rows — nothing conflicts, so
+// they oversell. Reliable on a conventional DB / the in-process engine;
+// intermittent even on real DSQL (snapshot isolation permits write skew).
 // ─────────────────────────────────────────────────────────────────────────────
-export async function placeOrderNaive(
-  backend: Backend,
-  input: PlaceOrderInput,
-): Promise<PlaceOrderResult> {
-  const { buyerId, listingId, qty, buyerRegion } = input;
+export async function buyTicketsNaive(backend: Backend, input: BuyInput): Promise<BuyResult> {
+  const { buyerId, sectionId, qty, buyerRegion } = input;
   const tx = backend.autocommitTx();
 
-  // 1) read the listing + COUNT existing orders (auto-commit, stale snapshot)
-  const listing = await backend.repo.readListingForUpdate(tx, listingId);
-  if (!listing) throw new BlockedError("listing_not_found");
-  const alreadyOrdered = await backend.repo.countOrdersForListing(tx, listingId);
+  const section = await backend.repo.readSectionForUpdate(tx, sectionId);
+  if (!section) throw new BlockedError("section_not_found");
 
-  // 2) act on the count — no shared-row write, so no commit-time arbitration.
-  if (alreadyOrdered + qty > listing.inventory_count) {
-    throw new BlockedError("insufficient_inventory");
-  }
+  // "Check" availability by counting orders (a stale predicate read) — never
+  // contends on a shared row, which is exactly why it write-skews into oversell.
+  const sold = await backend.repo.countOrdersForSection(tx, sectionId);
+  if (sold + qty > section.seat_count) throw new BlockedError("insufficient_inventory");
 
-  const amountCents = listing.price_cents * qty;
+  const amountCents = section.price_cents * qty;
   const orderId = uuidv7();
   const ts = new Date().toISOString();
-
-  // NOTE: no inventory decrement — that's exactly why it can't conflict.
   await backend.repo.insertOrder(tx, {
-    id: orderId,
-    buyer_id: buyerId,
-    listing_id: listingId,
-    seller_id: listing.seller_id,
-    qty,
-    amount_cents: amountCents,
-    currency: listing.currency,
-    status: "escrowed",
-    buyer_region: buyerRegion,
-    created_at: ts,
-    updated_at: ts,
+    id: orderId, buyer_id: buyerId, event_id: section.event_id, section_id: sectionId,
+    kind: "primary", qty, amount_cents: amountCents, currency: section.currency,
+    status: "escrowed", buyer_region: buyerRegion, idempotency_key: null, created_at: ts, updated_at: ts,
   });
-  await backend.repo.insertEscrowAccount(tx, {
-    order_id: orderId,
-    held_cents: amountCents,
-    state: "open",
-    updated_at: ts,
-  });
-  await backend.repo.insertEscrowEntry(tx, {
-    id: uuidv7(),
-    order_id: orderId,
-    entry_type: "hold",
-    amount_cents: amountCents,
-    balance_after_cents: amountCents,
-    created_at: ts,
-  });
-
-  return { orderId, amountCents, attempts: 1, conflicts: 0 };
+  await backend.repo.insertEscrowAccount(tx, { order_id: orderId, held_cents: amountCents, state: "open", updated_at: ts });
+  await backend.repo.insertEscrowEntry(tx, { id: uuidv7(), order_id: orderId, entry_type: "hold", amount_cents: amountCents, balance_after_cents: amountCents, created_at: ts });
+  const ticketIds: string[] = [];
+  for (let i = 0; i < qty; i++) {
+    const tid = uuidv7();
+    ticketIds.push(tid);
+    await backend.repo.insertTicket(tx, {
+      id: tid, order_id: orderId, section_id: sectionId, event_id: section.event_id,
+      seat_label: `NAIVE-${tid.slice(0, 4)}`, holder_user_id: buyerId, state: "valid",
+      resale_price_cap_cents: resaleCapCents(section.price_cents), created_at: ts,
+    });
+  }
+  return { orderId, amountCents, ticketIds, attempts: 1, conflicts: 0 };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// T2 — Release escrow on delivery confirmation (idempotent, conflict-guarded)
-//
-// Concurrent double-release across regions: one wins; the other retries, sees
-// state='settled', and returns without paying twice. Ledger reconciles.
+// T2 — RELEASE / REFUND ESCROW (idempotent). No double-release.
 // ─────────────────────────────────────────────────────────────────────────────
-export interface SettleResult {
-  changed: boolean;
-  attempts: number;
-  conflicts: number;
-}
+export interface SettleResult { changed: boolean; attempts: number; conflicts: number; }
 
-export async function releaseEscrow(
-  backend: Backend,
-  orderId: string,
-  retry?: RetryOptions,
-): Promise<SettleResult> {
+export async function releaseEscrow(backend: Backend, orderId: string, retry?: RetryOptions): Promise<SettleResult> {
   const r = await retryOnConflict(
     () =>
       backend.transaction(async (tx) => {
         const acct = await backend.repo.readEscrowAccountForUpdate(tx, orderId);
         if (!acct) throw new BlockedError("order_not_found");
-        if (acct.state !== "open") return false; // idempotent: already settled/refunded
-
-        await backend.repo.insertEscrowEntry(tx, {
-          id: uuidv7(),
-          order_id: orderId,
-          entry_type: "release",
-          amount_cents: acct.held_cents,
-          balance_after_cents: 0,
-          created_at: new Date().toISOString(),
-        });
+        if (acct.state !== "open") return false; // idempotent
+        await backend.repo.insertEscrowEntry(tx, { id: uuidv7(), order_id: orderId, entry_type: "release", amount_cents: acct.held_cents, balance_after_cents: 0, created_at: new Date().toISOString() });
         await backend.repo.setEscrowAccount(tx, orderId, 0, "settled");
         await backend.repo.setOrderStatus(tx, orderId, "released");
         return true;
@@ -256,29 +193,18 @@ export async function releaseEscrow(
   return { changed: r.value, attempts: r.attempts, conflicts: r.conflicts };
 }
 
-// Refund mirrors release: idempotent, conflict-guarded, ledger-balancing.
-export async function refundEscrow(
-  backend: Backend,
-  orderId: string,
-  retry?: RetryOptions,
-): Promise<SettleResult> {
+export async function refundEscrow(backend: Backend, orderId: string, retry?: RetryOptions): Promise<SettleResult> {
   const r = await retryOnConflict(
     () =>
       backend.transaction(async (tx) => {
         const acct = await backend.repo.readEscrowAccountForUpdate(tx, orderId);
         if (!acct) throw new BlockedError("order_not_found");
-        if (acct.state !== "open") return false;
-
-        await backend.repo.insertEscrowEntry(tx, {
-          id: uuidv7(),
-          order_id: orderId,
-          entry_type: "refund",
-          amount_cents: acct.held_cents,
-          balance_after_cents: 0,
-          created_at: new Date().toISOString(),
-        });
+        if (acct.state !== "open") return false; // idempotent
+        await backend.repo.insertEscrowEntry(tx, { id: uuidv7(), order_id: orderId, entry_type: "refund", amount_cents: acct.held_cents, balance_after_cents: 0, created_at: new Date().toISOString() });
         await backend.repo.setEscrowAccount(tx, orderId, 0, "refunded");
         await backend.repo.setOrderStatus(tx, orderId, "refunded");
+        // Void the tickets so a refunded buyer can't use or resell them.
+        await backend.repo.voidTicketsForOrder(tx, orderId);
         return true;
       }),
     retry,
@@ -287,18 +213,15 @@ export async function refundEscrow(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// T3 — Verification decision (record + capability move atomically)
-//
-// The append-only audit record and the denormalized capability (sellers.current_tier)
-// are written in one transaction, so trust state can never be half-applied.
+// T3 — VERIFICATION DECISION (record + capability move together, atomic).
 // ─────────────────────────────────────────────────────────────────────────────
 export interface DecideVerificationInput {
-  sellerId: string;
-  tier: Tier;
+  subjectId: string;
+  subjectKind: "fan" | "promoter";
+  tier: FanTier;
   method: string;
   evidenceUrl?: string | null;
   reviewedBy: string;
-  /** 'approved' grants the tier; 'revoked' drops the seller back to unverified. */
   decision: "approved" | "revoked";
 }
 
@@ -312,20 +235,16 @@ export async function decideVerification(
     () =>
       backend.transaction(async (tx) => {
         const ts = new Date().toISOString();
-        const grantedTier: Tier =
-          input.decision === "approved" ? input.tier : "unverified";
         await backend.repo.insertVerification(tx, {
-          id: verificationId,
-          seller_id: input.sellerId,
-          tier: input.tier,
-          method: input.method,
-          evidence_url: input.evidenceUrl ?? null,
-          status: input.decision,
-          reviewed_by: input.reviewedBy,
-          created_at: ts,
-          decided_at: ts,
+          id: verificationId, subject_id: input.subjectId, subject_kind: input.subjectKind,
+          tier: input.tier, method: input.method, evidence_url: input.evidenceUrl ?? null,
+          status: input.decision, reviewed_by: input.reviewedBy, created_at: ts, decided_at: ts,
         });
-        await backend.repo.updateSellerTier(tx, input.sellerId, grantedTier);
+        if (input.subjectKind === "fan") {
+          await backend.repo.updateFanTier(tx, input.subjectId, input.decision === "approved" ? input.tier : "unverified");
+        } else {
+          await backend.repo.setPromoterVerified(tx, input.subjectId, input.decision === "approved");
+        }
         return verificationId;
       }),
     retry,
@@ -334,8 +253,79 @@ export async function decideVerification(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Reconciliation invariant — assertable in the demo.
-//   for every order:  held_cents + Σ release + Σ refund  =  Σ hold
+// T4 — ESCROWED RESALE WITH A DB-ENFORCED PRICE CAP.
+//
+// In one transaction: assert the price ≤ the ticket's resale cap (anti-scalp at
+// commit), move the ticket capability (holder + state) atomically so it can never
+// be valid for two holders, and open an escrow hold for the resale amount. The
+// seller must currently hold the ticket and be allowed to resell.
+// ─────────────────────────────────────────────────────────────────────────────
+export interface ResaleInput {
+  ticketId: string;
+  sellerId: string;
+  buyerId: string;
+  priceCents: number;
+  buyerRegion: string;
+  idempotencyKey?: string | null;
+}
+
+export async function resaleTicket(
+  backend: Backend,
+  input: ResaleInput,
+  retry?: RetryOptions,
+): Promise<{ orderId: string; attempts: number; conflicts: number }> {
+  let conflictsSeen = 0;
+  let result;
+  try {
+    result = await retryOnConflict(
+      () =>
+        backend.transaction(async (tx) => {
+          const ticket = await backend.repo.readTicketForUpdate(tx, input.ticketId);
+          if (!ticket) throw new BlockedError("ticket_not_found");
+          if (ticket.holder_user_id !== input.sellerId || ticket.state !== "valid") {
+            throw new BlockedError("not_ticket_holder");
+          }
+          // Seller must be allowed to resell (verified-fan capability).
+          const sellerTier = (await backend.repo.readFanTier(tx, input.sellerId)) ?? "unverified";
+          if (!TIERS[sellerTier].canResell) throw new BlockedError("ticket_not_resellable");
+          // Anti-scalp: price ceiling enforced at COMMIT, not in the UI.
+          if (input.priceCents > ticket.resale_price_cap_cents) throw new BlockedError("resale_over_cap");
+
+          // Atomic capability move — the ticket can never be valid for two holders.
+          await backend.repo.transferTicket(tx, input.ticketId, input.buyerId, "valid");
+
+          // Escrow the resale amount (buyer → escrow; released to seller later).
+          const orderId = uuidv7();
+          const ts = new Date().toISOString();
+          await backend.repo.insertOrder(tx, {
+            id: orderId, buyer_id: input.buyerId, event_id: ticket.event_id, section_id: ticket.section_id,
+            kind: "resale", qty: 1, amount_cents: input.priceCents, currency: "USD",
+            status: "escrowed", buyer_region: input.buyerRegion, idempotency_key: input.idempotencyKey ?? null,
+            created_at: ts, updated_at: ts,
+          });
+          await backend.repo.insertEscrowAccount(tx, { order_id: orderId, held_cents: input.priceCents, state: "open", updated_at: ts });
+          await backend.repo.insertEscrowEntry(tx, { id: uuidv7(), order_id: orderId, entry_type: "hold", amount_cents: input.priceCents, balance_after_cents: input.priceCents, created_at: ts });
+          return orderId;
+        }),
+      { ...retry, onRetry: (a, e) => { conflictsSeen++; retry?.onRetry?.(a, e); } },
+    );
+  } catch (err) {
+    if (err instanceof BlockedError) (err as BlockedError & { conflicts?: number }).conflicts = conflictsSeen;
+    throw err;
+  }
+  return { orderId: result.value, attempts: result.attempts, conflicts: result.conflicts };
+}
+
+/** Platform economics for a settled order (display only). */
+export function settlement(amountCents: number, tier: FanTier, kind: "primary" | "resale") {
+  const feeBps = kind === "resale" ? RESALE_SPREAD_BPS : TIERS[tier].feeBps;
+  const fee = Math.floor((amountCents * feeBps) / 10_000);
+  return { feeCents: fee, payoutCents: amountCents - fee, feeBps };
+}
+export { platformFeeCents };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Reconciliation invariant: held + Σrelease + Σrefund = Σhold (per order).
 // ─────────────────────────────────────────────────────────────────────────────
 export interface Reconciliation {
   orderId: string;
@@ -344,30 +334,17 @@ export interface Reconciliation {
   sumHold: number;
   sumRelease: number;
   sumRefund: number;
-  /** held + release + refund - hold; must be 0. */
   residual: number;
 }
 
-export async function reconcile(
-  backend: Backend,
-  orderId: string,
-): Promise<Reconciliation> {
+export async function reconcile(backend: Backend, orderId: string): Promise<Reconciliation> {
   const acct = await backend.q.getEscrowAccount(orderId);
   const entries = await backend.q.listEscrowEntries(orderId);
-  const sum = (t: string) =>
-    entries.filter((e) => e.entry_type === t).reduce((a, e) => a + e.amount_cents, 0);
+  const sum = (t: string) => entries.filter((e) => e.entry_type === t).reduce((a, e) => a + e.amount_cents, 0);
   const sumHold = sum("hold");
   const sumRelease = sum("release");
   const sumRefund = sum("refund");
   const heldCents = acct?.held_cents ?? 0;
   const residual = heldCents + sumRelease + sumRefund - sumHold;
-  return {
-    orderId,
-    ok: residual === 0,
-    heldCents,
-    sumHold,
-    sumRelease,
-    sumRefund,
-    residual,
-  };
+  return { orderId, ok: residual === 0, heldCents, sumHold, sumRelease, sumRefund, residual };
 }

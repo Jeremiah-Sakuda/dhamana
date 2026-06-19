@@ -33,13 +33,17 @@ export class ConflictError extends Error {
 }
 
 export type BlockedReason =
-  | "verification_required"
-  | "insufficient_inventory"
-  | "listing_not_found"
-  | "listing_inactive"
-  | "seller_not_found"
+  | "verification_required" // unverified fan over the per-event cap
+  | "insufficient_inventory" // sold out
+  | "section_not_found"
+  | "section_inactive"
+  | "event_not_found"
   | "order_not_found"
-  | "order_limit_exceeded";
+  | "order_limit_exceeded" // verified fan over the (higher) per-event cap
+  | "ticket_not_found"
+  | "not_ticket_holder"
+  | "ticket_not_resellable"
+  | "resale_over_cap"; // resale price exceeds the DB-enforced ceiling
 
 export class BlockedError extends Error {
   readonly reason: BlockedReason;

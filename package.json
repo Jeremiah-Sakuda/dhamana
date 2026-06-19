@@ -13,6 +13,7 @@
     "test:watch": "vitest",
     "seed": "tsx scripts/seed.ts",
     "race": "tsx scripts/race.ts",
+    "load": "tsx scripts/load-test.ts",
     "smoke:dsql": "tsx scripts/smoke-dsql.ts",
     "db:schema": "tsx scripts/apply-schema.ts",
     "typecheck": "tsc --noEmit"
