@@ -331,12 +331,16 @@ export class SqlBackend implements Backend {
       ddl = ddl.replace(/CREATE INDEX ASYNC/g, "CREATE INDEX");
       ddl = ddl.replace(/CREATE UNIQUE INDEX ASYNC/g, "CREATE UNIQUE INDEX");
     }
+    // Strip SQL line comments (full-line AND trailing) first, so comment text is
+    // never glued onto the following statement when we split. (schema.sql has no
+    // string literals containing "--", so this is safe.)
+    const stripped = ddl.replace(/--[^\n]*/g, "");
     // DSQL requires ONE DDL statement per transaction and forbids mixing DDL+DML,
-    // so each statement is sent on its own (postgres.js .simple(), no tx wrapper).
-    const statements = ddl
-      .split(/;\s*\n/)
+    // so each statement is sent on its own (no tx wrapper).
+    const statements = stripped
+      .split(";")
       .map((s) => s.trim())
-      .filter((s) => s && !s.startsWith("--"));
+      .filter(Boolean);
     for (const stmt of statements) {
       try {
         await this.sql.unsafe(stmt);

@@ -45,9 +45,17 @@ async function main() {
   assert(guarded.systemReconciliation.ok, "books reconcile against inventory");
 
   await regionA.reset();
-  console.log("\nNaive race (the failure DSQL prevents):");
+  console.log("\nNaive race:");
   const naive = await runRace({ mode: "naive", listingId: HERO_LISTING_ID });
-  assert(naive.oversold, "naive mode oversells (demonstrates the contrast)");
+  if (name === "dsql") {
+    // On real DSQL, the naive decrement still contends on the shared listing row,
+    // so OCC rejects the loser at commit (raw 40001, no graceful retry) — DSQL
+    // refuses to oversell even when the app code is naive.
+    assert(!naive.oversold, "DSQL refuses to oversell even on the naive path (loser hits 40001)");
+  } else {
+    // Conventional engine (in-process / read-committed Postgres): naive oversells.
+    assert(naive.oversold, "naive mode oversells on a conventional DB (the failure DSQL prevents)");
+  }
 
   // Cross-endpoint read consistency on the contested listing.
   await regionA.reset();
