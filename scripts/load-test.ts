@@ -11,10 +11,10 @@
  *   N=500 npm run load
  *   DB_BACKEND=dsql DSQL_REGION_A_HOST=... N=500 npm run load
  */
-import { getRegions, getBackendName } from "../src/db/index.js";
-import { buyTickets } from "../src/db/transactions.js";
-import { FLASH_SECTION_ID } from "../src/data/seed.js";
-import { uuidv7 } from "../src/lib/uuidv7.js";
+import { getRegions, getBackendName } from "../src/db/index";
+import { buyTickets } from "../src/db/transactions";
+import { FLASH_SECTION_ID } from "../src/data/seed";
+import { uuidv7 } from "../src/lib/uuidv7";
 
 const N = Number(process.env.N ?? 200);
 const CONFIGS = (process.env.BUCKETS ?? "1,16,64").split(",").map((s) => Number(s.trim()));

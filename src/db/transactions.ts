@@ -1,8 +1,8 @@
-import { BlockedError } from "./errors.js";
-import { retryOnConflict, type RetryOptions } from "./retry.js";
-import { uuidv7 } from "../lib/uuidv7.js";
-import { TIERS, resaleCapCents, platformFeeCents, RESALE_SPREAD_BPS } from "../lib/tiers.js";
-import type { Backend, EscrowEntry, FanTier, Order, Ticket } from "./types.js";
+import { BlockedError } from "./errors";
+import { retryOnConflict, type RetryOptions } from "./retry";
+import { uuidv7 } from "../lib/uuidv7";
+import { TIERS, resaleCapCents, platformFeeCents, RESALE_SPREAD_BPS } from "../lib/tiers";
+import type { Backend, EscrowEntry, FanTier, Order, Ticket } from "./types";
 
 /**
  * Verdict's load-bearing transactions, written once against the Repo interface

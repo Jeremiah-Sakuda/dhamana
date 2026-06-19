@@ -1,4 +1,4 @@
-import type { FanTier } from "../db/types.js";
+import type { FanTier } from "../db/types";
 
 /**
  * The verified-fan tier is not cosmetic — it gates concrete capability inside the

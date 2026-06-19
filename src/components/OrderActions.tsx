@@ -49,21 +49,21 @@ export function OrderActions({
         <p className="note" style={{ margin: 0 }}>
           {settled
             ? "This escrow is settled. Release and refund are idempotent — repeating them is a safe no-op."
-            : "Confirm delivery to release the dhamana to the seller, or refund the buyer on dispute."}
+            : "Settle the event to release escrow to the promoter, or refund the fan (voids the tickets)."}
         </p>
         <button
           className="btn"
           disabled={busy !== null || settled}
           onClick={() => act("release")}
         >
-          {busy === "release" ? "Releasing…" : "Confirm delivery → release"}
+          {busy === "release" ? "Releasing…" : "Settle event → release"}
         </button>
         <button
           className="btn btn-danger"
           disabled={busy !== null || settled}
           onClick={() => act("refund")}
         >
-          {busy === "refund" ? "Refunding…" : "Dispute → refund"}
+          {busy === "refund" ? "Refunding…" : "Refund → void tickets"}
         </button>
         {msg && <div className="verdict good">{msg}</div>}
       </div>

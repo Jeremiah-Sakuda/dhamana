@@ -1,4 +1,4 @@
-import { DEFAULT_BUCKETS, resaleCapCents } from "../lib/tiers.js";
+import { DEFAULT_BUCKETS, resaleCapCents } from "../lib/tiers";
 import type {
   User,
   Promoter,
@@ -10,7 +10,7 @@ import type {
   EscrowAccount,
   EscrowEntry,
   Ticket,
-} from "../db/types.js";
+} from "../db/types";
 
 /**
  * Deterministic seed data for Verdict. Fixed UUIDs keep demo URLs + the race

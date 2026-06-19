@@ -12,6 +12,7 @@ export interface Buyer {
   id: string;
   display_name: string;
   home_region: string;
+  fan_tier?: string;
 }
 
 interface PersonaCtx {
@@ -36,7 +37,7 @@ export function PersonaProvider({ children }: { children: ReactNode }) {
     fetch("/api/state")
       .then((r) => r.json())
       .then((d) => {
-        const bs: Buyer[] = d.buyers ?? [];
+        const bs: Buyer[] = d.fans ?? [];
         setBuyers(bs);
         const saved =
           typeof window !== "undefined" ? localStorage.getItem(KEY) : null;
@@ -69,7 +70,7 @@ export function PersonaSwitcher() {
   return (
     <label className="row" style={{ gap: 8 }}>
       <span className="eyebrow" style={{ fontSize: "0.66rem" }}>
-        Shopping as
+        Fan
       </span>
       <select
         value={current?.id ?? ""}

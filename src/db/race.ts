@@ -1,8 +1,8 @@
-import { getRegions, getBackendName, REGION_A_LABEL, REGION_B_LABEL } from "./index.js";
-import { buyTickets, buyTicketsNaive, reconcile, type Reconciliation } from "./transactions.js";
-import { BlockedError, isConflict } from "./errors.js";
-import { FAN_AMARA_ID, FAN_KWAME_ID, HERO_SECTION_ID } from "../data/seed.js";
-import type { Backend, BackendName } from "./types.js";
+import { getRegions, getBackendName, REGION_A_LABEL, REGION_B_LABEL } from "./index";
+import { buyTickets, buyTicketsNaive, reconcile, type Reconciliation } from "./transactions";
+import { BlockedError, isConflict } from "./errors";
+import { FAN_AMARA_ID, FAN_KWAME_ID, HERO_SECTION_ID } from "../data/seed";
+import type { Backend, BackendName } from "./types";
 
 /**
  * The two-region race harness — the showpiece. Fires two concurrent buys at the

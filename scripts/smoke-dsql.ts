@@ -6,11 +6,11 @@
  *   DB_BACKEND=dsql DSQL_REGION_A_HOST=... DSQL_REGION_A=us-east-1 \
  *     DSQL_REGION_B_HOST=... DSQL_REGION_B=us-west-2 npm run smoke:dsql
  */
-import { getRegions, getBackendName, REGION_A_LABEL, REGION_B_LABEL } from "../src/db/index.js";
-import { runRace } from "../src/db/race.js";
-import { buyTickets } from "../src/db/transactions.js";
-import { HERO_SECTION_ID, FLASH_SECTION_ID } from "../src/data/seed.js";
-import { uuidv7 } from "../src/lib/uuidv7.js";
+import { getRegions, getBackendName, REGION_A_LABEL, REGION_B_LABEL } from "../src/db/index";
+import { runRace } from "../src/db/race";
+import { buyTickets } from "../src/db/transactions";
+import { HERO_SECTION_ID, FLASH_SECTION_ID } from "../src/data/seed";
+import { uuidv7 } from "../src/lib/uuidv7";
 
 function assert(cond: boolean, msg: string) {
   if (!cond) { console.error(`  ✗ ${msg}`); throw new Error(msg); }

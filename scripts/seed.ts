@@ -3,7 +3,7 @@
  *   npm run seed
  *   DB_BACKEND=dsql DSQL_REGION_A_HOST=... npm run seed
  */
-import { getRegions } from "../src/db/index.js";
+import { getRegions } from "../src/db/index";
 
 async function main() {
   const { regionA } = await getRegions();

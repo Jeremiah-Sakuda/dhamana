@@ -2,34 +2,34 @@ import { getDb } from "@/db";
 import { decideVerification } from "@/db/transactions";
 import { handleMutation } from "@/lib/api";
 import { ADMIN_ID } from "@/data/seed";
-import type { Tier } from "@/db/types";
+import type { FanTier } from "@/db/types";
 
 export const dynamic = "force-dynamic";
 
 export async function POST(req: Request) {
   const body = await req.json().catch(() => ({}));
   const {
-    sellerId,
+    subjectId,
+    subjectKind = "fan",
     tier = "verified",
     method = "doc_review",
     evidenceUrl = null,
     reviewedBy = ADMIN_ID,
     decision = "approved",
   } = body;
-  if (!sellerId) {
-    return Response.json({ ok: false, error: "sellerId required" }, { status: 400 });
-  }
+  if (!subjectId) return Response.json({ ok: false, error: "subjectId required" }, { status: 400 });
   return handleMutation(async () => {
     const db = await getDb();
-    const r = await decideVerification(db, {
-      sellerId,
-      tier: tier as Tier,
+    const verification = await decideVerification(db, {
+      subjectId,
+      subjectKind: subjectKind === "promoter" ? "promoter" : "fan",
+      tier: tier as FanTier,
       method,
       evidenceUrl,
       reviewedBy,
       decision: decision === "revoked" ? "revoked" : "approved",
     });
-    const seller = await db.q.getSeller(sellerId);
-    return { verification: r, seller };
+    const subject = await db.q.getUser(subjectId);
+    return { verification, subject };
   });
 }

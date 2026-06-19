@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { freshMemoryBackend } from "../src/db/index.js";
+import { freshMemoryBackend } from "../src/db/index";
 import {
   buyTickets,
   buyTicketsNaive,
@@ -8,15 +8,15 @@ import {
   decideVerification,
   resaleTicket,
   reconcile,
-} from "../src/db/transactions.js";
-import { BlockedError } from "../src/db/errors.js";
-import { uuidv7 } from "../src/lib/uuidv7.js";
-import { resaleCapCents } from "../src/lib/tiers.js";
-import type { Backend } from "../src/db/types.js";
+} from "../src/db/transactions";
+import { BlockedError } from "../src/db/errors";
+import { uuidv7 } from "../src/lib/uuidv7";
+import { resaleCapCents } from "../src/lib/tiers";
+import type { Backend } from "../src/db/types";
 import {
   FAN_AMARA_ID, FAN_KWAME_ID, FAN_ZARA_ID, BOT_ID, ADMIN_ID,
   HERO_SECTION_ID, FLASH_SECTION_ID, LOWER_SECTION_ID, EVENT_HERO_ID,
-} from "../src/data/seed.js";
+} from "../src/data/seed";
 
 let db: Backend;
 beforeEach(async () => { db = await freshMemoryBackend(); });

@@ -5,10 +5,10 @@ import { usePathname } from "next/navigation";
 import { PersonaSwitcher } from "./Persona";
 
 const LINKS = [
-  { href: "/", label: "Browse" },
-  { href: "/consistency", label: "Consistency" },
-  { href: "/orders", label: "Orders" },
-  { href: "/seller", label: "Seller" },
+  { href: "/", label: "Events" },
+  { href: "/consistency", label: "The drop" },
+  { href: "/tickets", label: "My tickets" },
+  { href: "/promoter", label: "Promoter" },
   { href: "/reviewer", label: "Reviewer" },
 ];
 
@@ -20,7 +20,7 @@ export function Nav() {
     <nav className="nav">
       <div className="container nav-inner">
         <Link href="/" className="brand">
-          <span className="glyph">⚖</span> Dhamana
+          <span className="glyph">◆</span> Verdict
         </Link>
         <div className="nav-links">
           {LINKS.map((l) => (
