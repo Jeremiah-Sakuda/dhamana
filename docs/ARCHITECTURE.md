@@ -82,6 +82,22 @@ decisions, not just comments.
   would be a silent correctness bug. (For the local `postgres` backend we set
   `SERIALIZABLE`, which raises the same `40001` from the read-write dependency.)
 
+### Snapshot isolation permits write skew — contend on the shared row
+DSQL's isolation is **snapshot (REPEATABLE READ)**, not serializable. Snapshot
+isolation **permits write skew**: two transactions that read a *predicate* and
+write *different* rows never conflict. We demonstrate this honestly — the naive
+order path "checks" availability with `SELECT count(*) FROM orders WHERE
+listing_id = …` and then `INSERT`s a new order. Two concurrent naive orders both
+read `0`, both insert different rows, and **oversell — intermittently, even on
+real DSQL** (confirmed live via `npm run smoke:dsql`; the window depends on commit
+timing).
+- **Implication / the fix:** the guarded path (T1) decrements the **shared
+  listing row**. That makes the contention visible to the engine, turning the
+  race into a write-write conflict DSQL rejects at commit (`40001`). The lesson:
+  on an OCC/snapshot database you must write the contested row to get protection;
+  reading a predicate and writing elsewhere is not enough. The guarded path
+  oversells **zero** times across thousands of runs (see the test suite).
+
 ### No SERIAL / sequences → client-generated UUIDv7
 - DSQL has no `SERIAL`; AWS recommends application-generated UUID keys, both for
   compatibility and to **spread writes across the keyspace** (monotonic keys

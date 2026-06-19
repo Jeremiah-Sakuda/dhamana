@@ -45,13 +45,20 @@ async function main() {
   assert(guarded.systemReconciliation.ok, "books reconcile against inventory");
 
   await regionA.reset();
-  console.log("\nNaive race:");
+  console.log("\nNaive race (count-based check — informational):");
   const naive = await runRace({ mode: "naive", listingId: HERO_LISTING_ID });
   if (name === "dsql") {
-    // On real DSQL, the naive decrement still contends on the shared listing row,
-    // so OCC rejects the loser at commit (raw 40001, no graceful retry) — DSQL
-    // refuses to oversell even when the app code is naive.
-    assert(!naive.oversold, "DSQL refuses to oversell even on the naive path (loser hits 40001)");
+    // Snapshot isolation PERMITS write skew, so the count-based naive path
+    // oversells INTERMITTENTLY on real DSQL (depends on commit timing). Both
+    // outcomes are expected — this is informational, not a gate. The point is
+    // that the GUARDED path (above) never oversells. The guarded result is what
+    // the smoke actually asserts.
+    console.log(
+      naive.oversold
+        ? "  • naive OVERSOLD (write skew slipped through — snapshot isolation permits it)"
+        : "  • naive did not oversell this run (commit ordering closed the window)",
+    );
+    console.log("  → the guarded path eliminates this entirely; naive is unsafe by design.");
   } else {
     // Conventional engine (in-process / read-committed Postgres): naive oversells.
     assert(naive.oversold, "naive mode oversells on a conventional DB (the failure DSQL prevents)");

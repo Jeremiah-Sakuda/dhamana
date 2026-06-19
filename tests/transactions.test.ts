@@ -64,7 +64,7 @@ describe("T1 — oversell prevention under a two-region race", () => {
     expect(rec.residual).toBe(0);
   });
 
-  it("NAIVE: the same race oversells — both commit, inventory goes negative", async () => {
+  it("NAIVE: the same race oversells via write skew — both commit, two orders for one unit", async () => {
     const results = await Promise.allSettled([
       placeOrderNaive(db, {
         buyerId: BUYER_AMARA_ID,
@@ -79,13 +79,18 @@ describe("T1 — oversell prevention under a two-region race", () => {
         buyerRegion: "us-east-2",
       }),
     ]);
+    // Both "succeed" — the count-based check + non-conflicting inserts oversell.
     expect(results.every((r) => r.status === "fulfilled")).toBe(true);
 
-    const listing = await db.q.getListing(HERO_LISTING_ID);
-    expect(listing?.inventory_count).toBe(-1); // oversold: the failure DSQL prevents
-
     const orders = await db.q.listOrders();
-    expect(orders).toHaveLength(2); // two payments held for one unit
+    expect(orders).toHaveLength(2); // two payments held for ONE available unit
+
+    const listing = await db.q.getListing(HERO_LISTING_ID);
+    // Naive never touched the shared counter — that's exactly why it didn't
+    // conflict. The oversell shows up as orders(2) > inventory(1), not as a
+    // negative counter.
+    expect(listing?.inventory_count).toBe(1);
+    expect(orders.length).toBeGreaterThan(listing!.inventory_count);
   });
 
   it("repeats the guarded race many times without ever oversilling", async () => {

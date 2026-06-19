@@ -14,6 +14,7 @@ interface Outcome {
 }
 interface Report {
   mode: "naive" | "guarded";
+  backend: string;
   title: string;
   startInventory: number;
   endInventoryRegionA: number;
@@ -205,13 +206,28 @@ export default function ConsistencyPage() {
                   saw the unit was gone, and failed safe — no oversell, and both
                   endpoints report the same final state.
                 </>
+              ) : report.oversold ? (
+                <>
+                  The naive path &ldquo;checks&rdquo; availability by{" "}
+                  <em>counting orders</em>, then inserts a new order — across{" "}
+                  separate statements, with no contention on a shared row. Both
+                  requests counted <span className="mono">0</span> existing
+                  orders, both passed the check, and both inserted to{" "}
+                  <em>different</em> rows — so nothing conflicted. Two payments are
+                  now held for one unit: a write skew that snapshot isolation
+                  permits. The guarded path fixes it by decrementing the shared
+                  listing row, turning the race into a conflict the database rejects.
+                </>
               ) : (
                 <>
-                  The naive path checks then acts across <em>separate</em>{" "}
-                  statements with no conflict guard. Both endpoints read a stale{" "}
-                  <span className="mono">inventory = 1</span>, both passed the
-                  check, both committed — inventory went negative and two payments
-                  are held for one unit. This is the failure Dhamana prevents.
+                  Even this naive, count-based check couldn&rsquo;t oversell here:{" "}
+                  <strong>Aurora DSQL arbitrated at commit</strong>, so the second
+                  request either saw the first&rsquo;s order or had its write
+                  rejected — only one order stuck. The same naive code oversells
+                  every time on a conventional single-region database (run it on the
+                  in-process engine locally to see the −1). DSQL prevents the
+                  oversell; the guarded path additionally makes the loser fail{" "}
+                  <em>gracefully</em> instead of with a raw 40001.
                 </>
               )}
             </p>

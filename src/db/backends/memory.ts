@@ -209,6 +209,22 @@ export class MemoryBackend implements Backend {
         return row ? row.current_tier : null;
       },
 
+      countOrdersForListing: async (tx, listingId): Promise<number> => {
+        await tick();
+        let count = 0;
+        for (const row of this.tables.orders.values()) {
+          if ((row.listing_id as string) === listingId) count++;
+        }
+        // Honor this tx's own buffered inserts (read-your-writes).
+        for (const op of (tx as MemTx).writes) {
+          if (op.kind === "insert" && op.table === "orders") {
+            const r = op.row as Record<string, unknown>;
+            if ((r.listing_id as string) === listingId) count++;
+          }
+        }
+        return count;
+      },
+
       decrementInventory: async (tx, id, qty) => {
         await tick();
         const t = tx as MemTx;

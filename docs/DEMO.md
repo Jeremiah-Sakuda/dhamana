@@ -15,13 +15,23 @@ what it unlocks, the verification record) and the escrow explainer: *"Your
 payment is held in dhamana until you confirm delivery."*
 
 ### 0:20–1:00 — Naive mode (the problem)
-Go to `/consistency`. Toggle **Naive** (check-then-act across separate
-statements, no guard). Hit **Reset & fire the race**. Both orders "succeed":
-- Endpoint A (us-east-1): ✓ order committed
-- Endpoint B (us-east-2): ✓ order committed
-- **Inventory: −1. Two payments held for one unit. Oversold ❌.**
+Go to `/consistency`. Toggle **Naive** (a realistic anti-pattern: "check"
+availability by *counting orders*, then insert — no contention on a shared row).
+Hit **Reset & fire the race**. Both orders "succeed":
+- Request A: ✓ order committed
+- Request B: ✓ order committed
+- **Two payments held for one unit. Oversold ❌** (a write skew snapshot
+  isolation permits).
 
-The audience has now *seen* the failure.
+The audience has now *seen* the failure. **Record this beat on the default
+in-process engine** (the footer reads "in-process DSQL-semantics engine"), which
+models a conventional single-region database where this oversells deterministically.
+
+> Honest note for the closing: on **real Aurora DSQL**, this same naive code
+> *can't* reliably oversell — DSQL arbitrates at commit. That's a point *for*
+> DSQL, and the guarded path below is what makes the prevention graceful. You can
+> show the live DSQL site (or `npm run smoke:dsql`) refusing to oversell as the
+> payoff.
 
 ### 1:00–1:50 — Guarded mode (Dhamana)
 Toggle **Guarded (Dhamana)** — the real path (T1, single transaction,

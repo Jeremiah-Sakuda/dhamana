@@ -153,6 +153,13 @@ export class SqlBackend implements Backend {
         return rows.length ? (rows[0].current_tier as Tier) : null;
       },
 
+      countOrdersForListing: async (tx, listingId): Promise<number> => {
+        const sql = (tx as SqlTx).sql;
+        const rows = await sql`
+          select count(*)::int as c from dhamana.orders where listing_id = ${listingId}`;
+        return n(rows[0].c);
+      },
+
       decrementInventory: async (tx, id, qty) => {
         const sql = (tx as SqlTx).sql;
         await sql`

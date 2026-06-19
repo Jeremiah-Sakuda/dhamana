@@ -148,11 +148,19 @@ export async function placeOrder(
 // ─────────────────────────────────────────────────────────────────────────────
 // NAIVE place order — deliberately broken, for the demo contrast.
 //
-// Check-then-act across SEPARATE auto-committed statements with NO retry and NO
-// conflict guard. Two of these racing the last unit both read inventory=1, both
-// pass the check, both decrement → oversell (inventory goes negative) and the
-// escrow ledger holds two payments for one unit. This is the failure DSQL
-// prevents, made visible.
+// The realistic anti-pattern: "check" availability by COUNTING existing orders
+// (a predicate read), then INSERT a new order — across SEPARATE auto-committed
+// statements, with NO retry and NO contention on a shared counter row. Two of
+// these racing the last unit both count 0 orders, both pass the check, and both
+// INSERT — to DIFFERENT rows, so nothing conflicts. The result is OVERSELL: two
+// orders (two held payments) for one available unit.
+//
+// This is a textbook WRITE SKEW that snapshot isolation permits — and it
+// oversells even on Amazon Aurora DSQL, because the concurrent writes never
+// touch the same row. The guarded path (T1) fixes it by decrementing the shared
+// listing row, turning the race into a write-write conflict the database rejects
+// at commit. Same database, same data — the difference is whether the app makes
+// the contention visible to the engine.
 // ─────────────────────────────────────────────────────────────────────────────
 export async function placeOrderNaive(
   backend: Backend,
@@ -161,12 +169,13 @@ export async function placeOrderNaive(
   const { buyerId, listingId, qty, buyerRegion } = input;
   const tx = backend.autocommitTx();
 
-  // 1) read (auto-commit)
+  // 1) read the listing + COUNT existing orders (auto-commit, stale snapshot)
   const listing = await backend.repo.readListingForUpdate(tx, listingId);
   if (!listing) throw new BlockedError("listing_not_found");
+  const alreadyOrdered = await backend.repo.countOrdersForListing(tx, listingId);
 
-  // 2) act — only the LOCAL stale read is consulted. No commit-time arbitration.
-  if (listing.inventory_count < qty) {
+  // 2) act on the count — no shared-row write, so no commit-time arbitration.
+  if (alreadyOrdered + qty > listing.inventory_count) {
     throw new BlockedError("insufficient_inventory");
   }
 
@@ -174,7 +183,7 @@ export async function placeOrderNaive(
   const orderId = uuidv7();
   const ts = new Date().toISOString();
 
-  await backend.repo.decrementInventory(tx, listingId, qty); // separate auto-commit
+  // NOTE: no inventory decrement — that's exactly why it can't conflict.
   await backend.repo.insertOrder(tx, {
     id: orderId,
     buyer_id: buyerId,

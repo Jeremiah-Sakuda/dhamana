@@ -139,6 +139,14 @@ export interface Repo {
   readSellerTier(tx: Tx, sellerId: string): Promise<Tier | null>;
 
   /**
+   * Count existing orders for a listing. Used by the NAIVE path to "check"
+   * availability by counting rows instead of decrementing a shared counter — a
+   * realistic anti-pattern that oversells under snapshot isolation (write skew),
+   * because the concurrent INSERTs touch different rows and never conflict.
+   */
+  countOrdersForListing(tx: Tx, listingId: string): Promise<number>;
+
+  /**
    * Decrement inventory by qty and flip to 'sold_out' at zero. This UPDATE on
    * the contested row is the conflict point: two regions racing the last unit
    * both UPDATE it; the database commits one and rejects the other with 40001.

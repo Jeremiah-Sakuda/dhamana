@@ -1,4 +1,5 @@
-import { getRegions, REGION_A_LABEL, REGION_B_LABEL } from "./index";
+import { getRegions, getBackendName, REGION_A_LABEL, REGION_B_LABEL } from "./index";
+import type { BackendName } from "./types";
 import { placeOrder, placeOrderNaive, reconcile, type Reconciliation } from "./transactions";
 import { BlockedError, isConflict } from "./errors";
 import { BUYER_AMARA_ID, BUYER_KWAME_ID, HERO_LISTING_ID } from "../data/seed";
@@ -30,6 +31,7 @@ export interface RaceOutcome {
 
 export interface RaceReport {
   mode: RaceMode;
+  backend: BackendName;
   listingId: string;
   title: string;
   startInventory: number;
@@ -95,6 +97,7 @@ export async function runRace(opts: {
 }): Promise<RaceReport> {
   const listingId = opts.listingId ?? HERO_LISTING_ID;
   const qty = opts.qty ?? 1;
+  const backend = await getBackendName();
   const { regionA, regionB } = await getRegions();
 
   const before = await regionA.q.getListing(listingId);
@@ -119,8 +122,11 @@ export async function runRace(opts: {
     createdOrderIds.map((id) => reconcile(regionA, id)),
   );
   const totalHeldCents = reconciliations.reduce((s, r) => s + r.heldCents, 0);
-  const unitsSold = startInventory - endInventoryRegionA;
-  const oversold = endInventoryRegionA < 0 || unitsSold > startInventory;
+  // Units committed = orders created. Oversell = more orders than units available
+  // (write-skew naive never decrements), or a negative counter (decrement naive).
+  const unitsSold = createdOrderIds.length;
+  const oversold =
+    createdOrderIds.length > startInventory || endInventoryRegionA < 0;
   const consistentAcrossRegions = endInventoryRegionA === endInventoryRegionB;
   const reconciliationOk = reconciliations.every((r) => r.ok);
 
@@ -128,13 +134,16 @@ export async function runRace(opts: {
     opts.mode === "guarded"
       ? oversold
         ? "UNEXPECTED: guarded mode oversold"
-        : `Guarded: ${createdOrderIds.length} order committed, inventory ${endInventoryRegionA}, ${totalHeldCents / 100} held. The loser hit 40001 and failed safe.`
+        : `Guarded: ${createdOrderIds.length} order committed for ${startInventory} unit, $${(totalHeldCents / 100).toFixed(2)} held. The loser hit 40001, retried, and failed safe.`
       : oversold
-        ? `Naive: BOTH orders committed, inventory ${endInventoryRegionA} (oversold), ${totalHeldCents / 100} held for ${startInventory} unit. The failure DSQL prevents.`
-        : "Naive: no race detected this run (try again).";
+        ? `Naive: ${createdOrderIds.length} orders committed for ${startInventory} unit — $${(totalHeldCents / 100).toFixed(2)} held (write skew). The books no longer reconcile against inventory.`
+        : backend === "memory"
+          ? "Naive: the conflicting writes were serialized this run — fire again to catch the oversell window."
+          : "Naive: the database rejected the conflicting commit — no oversell. The same naive code oversells on a conventional single-region database (see the local in-process demo).";
 
   return {
     mode: opts.mode,
+    backend,
     listingId,
     title,
     startInventory,

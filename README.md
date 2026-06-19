@@ -150,11 +150,31 @@ See [`.env.example`](.env.example) for all variables.
 
 ## The showpiece
 
-`/consistency` fires the two-region race live. Toggle **Naive** to manufacture
-the oversell (inventory `-1`, two payments held for one unit), then **Guarded**
-to watch the database prevent it: one endpoint commits, the other hits `40001`,
-retries, sees sold-out, and fails safe — and both endpoints report the same final
-state. This is where DSQL's win becomes legible to a non-engineer.
+`/consistency` fires the two-region race live. Toggle **Naive** (a realistic
+anti-pattern: "check" availability by counting orders, then insert without
+contending on a shared row) vs **Guarded** (T1: decrement the shared listing row
+inside one transaction).
+
+A nuance worth stating plainly, because it's the strongest thing about DSQL:
+
+- On a **conventional single-region database** (which the default in-process
+  engine models), the naive path **oversells every time** — two payments held for
+  one unit.
+- On **real Aurora DSQL**, the same naive code **still oversells intermittently**:
+  DSQL's isolation is *snapshot* (REPEATABLE READ), which permits **write skew** —
+  two transactions reading a predicate (`count(*)`) and inserting *different* rows
+  never conflict. Fast commit ordering often closes the window, but not always
+  (verified live — `npm run smoke:dsql` has caught it oversell on the real cluster).
+- The **guarded** path eliminates it entirely: by decrementing the **shared
+  listing row**, it turns the race into a write-write conflict DSQL rejects at
+  commit (`40001`), then retries to a graceful "sold out" — and both regional
+  endpoints report identical final state.
+
+The lesson (and the reason this is a *good* DSQL demo): you have to make the
+contention **visible to the engine** by writing the contested row. Read a
+predicate and write elsewhere, and snapshot isolation will let you oversell —
+even on DSQL. The guarded transaction is what makes the guarantee hold, verified
+on a live multi-region cluster.
 
 Full walkthrough: [docs/DEMO.md](docs/DEMO.md).
 
