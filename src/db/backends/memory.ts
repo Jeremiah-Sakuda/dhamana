@@ -136,11 +136,34 @@ export class MemoryBackend implements Backend {
       t.set(op.pk, row);
     }
     this.bump(op.table, op.pk);
+    // Bump the synthetic idempotency slot so a concurrent duplicate buy (which
+    // tracked this slot at its old version) conflicts at commit and replays.
+    if (op.kind === "insert" && op.table === "orders") {
+      const r = op.row as Record<string, unknown>;
+      if (r.idempotency_key) {
+        const slot = this.idemSlot(r.buyer_id as string, r.idempotency_key as string);
+        this.versions.set(slot, (this.versions.get(slot) ?? 0) + 1);
+      }
+    }
   }
 
   private write(tx: MemTx, op: WriteOp) {
-    if (tx.autocommit) this.apply(op);
-    else tx.writes.push(op);
+    if (tx.autocommit) {
+      this.apply(op);
+      return;
+    }
+    // Model DSQL write-write conflicts: record the base version of any EXISTING
+    // row we mutate, so two transactions writing the same row conflict at commit
+    // even if neither read it first. Inserts target fresh UUIDv7 pks (no collision).
+    if (op.kind !== "insert") {
+      const vk = this.vkey(op.table, op.pk);
+      if (!tx.reads.has(vk)) tx.reads.set(vk, this.version(op.table, op.pk));
+    }
+    tx.writes.push(op);
+  }
+
+  private idemSlot(buyerId: string, key: string) {
+    return `idem:${buyerId}:${key}`;
   }
 
   /** Read committed row, honoring this tx's own buffered writes (read-your-writes). */
@@ -199,14 +222,23 @@ export class MemoryBackend implements Backend {
       takeFromBucket: async (tx, sectionId, qty): Promise<boolean> => {
         await tick();
         const t = tx as MemTx;
-        const candidates = this.bucketsOf(t, sectionId).filter((b) => b.remaining_count >= qty);
-        if (candidates.length === 0) return false;
-        // Pick a random bucket with capacity — spreads writes; collisions retry.
-        const chosen = candidates[Math.floor(Math.random() * candidates.length)];
-        const pk = bkey(sectionId, chosen.bucket_no);
-        this.trackRead(t, "section_stock_buckets", pk); // the contended row
-        this.write(t, { kind: "adjust", table: "section_stock_buckets", pk, deltas: { remaining_count: -qty } });
-        return true;
+        // Draw `qty` seats GREEDILY across buckets (random order spreads writes;
+        // each touched bucket is its own conflict point). Only fail if the TOTAL
+        // across buckets is < qty — so seats are never stranded below qty/bucket.
+        const candidates = this.bucketsOf(t, sectionId).filter((b) => b.remaining_count > 0);
+        const total = candidates.reduce((s, b) => s + b.remaining_count, 0);
+        if (total < qty) return false;
+        const order = candidates.sort(() => Math.random() - 0.5);
+        let need = qty;
+        for (const b of order) {
+          if (need <= 0) break;
+          const take = Math.min(b.remaining_count, need);
+          const pk = bkey(sectionId, b.bucket_no);
+          this.trackRead(t, "section_stock_buckets", pk); // the contended row
+          this.write(t, { kind: "adjust", table: "section_stock_buckets", pk, deltas: { remaining_count: -take } });
+          need -= take;
+        }
+        return need <= 0;
       },
 
       setSectionStatus: async (tx, sectionId, status) => {
@@ -275,11 +307,16 @@ export class MemoryBackend implements Backend {
       },
       setPromoterVerified: async (tx, promoterId, verified) => { await tick(); this.write(tx as MemTx, { kind: "patch", table: "promoters", pk: promoterId, patch: { verified } }); },
 
-      findOrderByIdempotencyKey: async (tx, key): Promise<Order | null> => {
+      findOrderByIdempotencyKey: async (tx, buyerId, key): Promise<Order | null> => {
         await tick();
         const t = tx as MemTx;
-        for (const row of this.tables.orders.values()) if ((row.idempotency_key as string) === key) return clone<Order>(row);
-        for (const op of t.writes) if (op.kind === "insert" && op.table === "orders" && (op.row.idempotency_key as string) === key) return clone<Order>(op.row);
+        // Track the synthetic slot so a concurrent insert with this (buyer,key)
+        // forces a 40001 here → retry → idempotent replay.
+        const slot = this.idemSlot(buyerId, key);
+        if (!t.autocommit && !t.reads.has(slot)) t.reads.set(slot, this.versions.get(slot) ?? 0);
+        const match = (r: Record<string, unknown>) => r.buyer_id === buyerId && r.idempotency_key === key;
+        for (const row of this.tables.orders.values()) if (match(row)) return clone<Order>(row);
+        for (const op of t.writes) if (op.kind === "insert" && op.table === "orders" && match(op.row)) return clone<Order>(op.row);
         return null;
       },
     };

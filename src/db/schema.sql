@@ -149,7 +149,9 @@ CREATE INDEX ASYNC IF NOT EXISTS events_promoter_idx       ON verdict.events (pr
 CREATE INDEX ASYNC IF NOT EXISTS orders_buyer_idx          ON verdict.orders (buyer_id);
 CREATE INDEX ASYNC IF NOT EXISTS orders_event_idx          ON verdict.orders (event_id);
 CREATE INDEX ASYNC IF NOT EXISTS orders_section_idx        ON verdict.orders (section_id);
-CREATE INDEX ASYNC IF NOT EXISTS orders_idem_idx           ON verdict.orders (idempotency_key);
+-- UNIQUE so a duplicate (buyer, idempotency_key) insert is rejected by the DB
+-- (NULLs are distinct, so keyless orders are unconstrained). The race-safe guard.
+CREATE UNIQUE INDEX ASYNC IF NOT EXISTS orders_idem_uidx     ON verdict.orders (buyer_id, idempotency_key);
 CREATE INDEX ASYNC IF NOT EXISTS escrow_entries_order_idx  ON verdict.escrow_entries (order_id);
 CREATE INDEX ASYNC IF NOT EXISTS verifications_subject_idx ON verdict.verifications (subject_id);
 CREATE INDEX ASYNC IF NOT EXISTS tickets_holder_idx        ON verdict.tickets (holder_user_id);

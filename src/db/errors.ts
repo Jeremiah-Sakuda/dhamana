@@ -43,7 +43,9 @@ export type BlockedReason =
   | "ticket_not_found"
   | "not_ticket_holder"
   | "ticket_not_resellable"
-  | "resale_over_cap"; // resale price exceeds the DB-enforced ceiling
+  | "resale_over_cap" // resale price exceeds the DB-enforced ceiling
+  | "resale_invalid_price" // negative / non-integer resale price
+  | "invalid_quantity"; // negative / non-integer / over-cap ticket quantity
 
 export class BlockedError extends Error {
   readonly reason: BlockedReason;

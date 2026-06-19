@@ -205,8 +205,10 @@ export interface Repo {
   updateFanTier(tx: Tx, userId: string, tier: FanTier): Promise<void>;
   setPromoterVerified(tx: Tx, promoterId: string, verified: boolean): Promise<void>;
 
-  /** Idempotency: find an existing order by its idempotency key (read-your-writes). */
-  findOrderByIdempotencyKey(tx: Tx, key: string): Promise<Order | null>;
+  /** Idempotency: find an existing order by (buyer, key) — scoped so one fan's key
+   *  can never match another's order. Conflict-tracked so a concurrent duplicate
+   *  insert is rejected at commit. */
+  findOrderByIdempotencyKey(tx: Tx, buyerId: string, key: string): Promise<Order | null>;
 }
 
 /** Read-only queries used by the UI / API. */

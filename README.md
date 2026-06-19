@@ -106,6 +106,28 @@ A 3–5% primary take rate (undercutting incumbents' 20–30%), a 5–10% spread
 
 ---
 
+## Security & scope (honest about the demo)
+
+This is a hackathon demo and **has no authentication** — a persona switcher stands
+in for login, and the API trusts the actor ids in the request body. What that does
+and doesn't mean:
+
+- **Integrity invariants are enforced regardless of auth** and validated: no
+  oversell, no double-sale, idempotent settlement, reconciliation, the
+  verified-fan cap, the resale price cap, and input validation (quantities and
+  prices are integer/range-checked before any write, so they can't invert the
+  inventory or escrow math). The verify endpoint validates the tier and stamps
+  the reviewer server-side (no client-supplied reviewer identity).
+- **Authorization is the explicit out-of-scope part.** In production, mutation
+  endpoints (`/api/buy`, `/api/resale`, `/api/verify`, release/refund) must be
+  gated on a server-verified identity/role (buyer for refund, promoter for
+  release, admin for verify), the demo controls (`/api/reset`, `/api/load`) gated
+  behind a flag, and DSQL's 3,000-row/txn limit handled with batched deletes for
+  large resets. These are named next steps, not silent gaps.
+
+The data-layer invariants — the thing this project is actually about — hold under
+concurrency on all three backends and on the live cluster (see `npm run smoke:dsql`).
+
 ## Repository layout
 
 ```

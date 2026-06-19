@@ -116,20 +116,28 @@ export class SqlBackend implements Backend {
       },
       takeFromBucket: async (tx, sectionId, qty): Promise<boolean> => {
         const sql = (tx as SqlTx).sql;
-        // Pick a random bucket with capacity, then conditionally decrement it.
-        // The UPDATE on that bucket row is the conflict point DSQL arbitrates at
-        // commit; `random()` spreads selection so distinct buckets don't conflict.
-        const pick = await sql`
-          select bucket_no from verdict.section_stock_buckets
-          where section_id = ${sectionId} and remaining_count >= ${qty}
-          order by random() limit 1`;
-        if (!pick.length) return false;
-        const bn = n(pick[0].bucket_no);
-        const res = await sql`
-          update verdict.section_stock_buckets
-          set remaining_count = remaining_count - ${qty}
-          where section_id = ${sectionId} and bucket_no = ${bn} and remaining_count >= ${qty}`;
-        return (res.count ?? 0) > 0;
+        // Draw `qty` seats GREEDILY across buckets so seats are never stranded
+        // below qty-per-bucket. Each per-bucket UPDATE is its own conflict point
+        // DSQL arbitrates at commit; `random()` spreads selection so distinct
+        // buckets don't conflict. Fail only if the TOTAL is < qty.
+        const totalRow = await sql`select coalesce(sum(remaining_count),0)::int as r from verdict.section_stock_buckets where section_id = ${sectionId}`;
+        if (n(totalRow[0].r) < qty) return false;
+        let need = qty;
+        for (let guard = 0; need > 0 && guard < 512; guard++) {
+          const pick = await sql`
+            select bucket_no, remaining_count from verdict.section_stock_buckets
+            where section_id = ${sectionId} and remaining_count > 0
+            order by random() limit 1`;
+          if (!pick.length) break;
+          const bn = n(pick[0].bucket_no);
+          const take = Math.min(n(pick[0].remaining_count), need);
+          const res = await sql`
+            update verdict.section_stock_buckets
+            set remaining_count = remaining_count - ${take}
+            where section_id = ${sectionId} and bucket_no = ${bn} and remaining_count >= ${take}`;
+          if ((res.count ?? 0) > 0) need -= take;
+        }
+        return need <= 0;
       },
       setSectionStatus: async (tx, sectionId, status) => {
         const sql = (tx as SqlTx).sql;
@@ -202,9 +210,9 @@ export class SqlBackend implements Backend {
         const sql = (tx as SqlTx).sql;
         await sql`update verdict.promoters set verified = ${verified} where user_id = ${promoterId}`;
       },
-      findOrderByIdempotencyKey: async (tx, key): Promise<Order | null> => {
+      findOrderByIdempotencyKey: async (tx, buyerId, key): Promise<Order | null> => {
         const sql = (tx as SqlTx).sql;
-        const rows = await sql`select * from verdict.orders where idempotency_key = ${key} limit 1`;
+        const rows = await sql`select * from verdict.orders where buyer_id = ${buyerId} and idempotency_key = ${key} limit 1`;
         return rows.length ? toOrder(rows[0]) : null;
       },
     };

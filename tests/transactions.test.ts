@@ -170,6 +170,45 @@ describe("T4 — escrowed resale: price cap + no double-sell", () => {
   });
 });
 
+describe("input validation (review hardening)", () => {
+  it("rejects negative / non-integer / over-max quantities without touching state", async () => {
+    for (const bad of [-5, 0, 1.5, 9999]) {
+      await expect(buy(FAN_AMARA_ID, FLASH_SECTION_ID, bad)).rejects.toMatchObject({ reason: "invalid_quantity" });
+    }
+    expect((await db.q.getSection(FLASH_SECTION_ID))!.remaining).toBe(1000); // no phantom seats
+    expect(await db.q.listOrders({ buyerId: FAN_AMARA_ID })).toHaveLength(0);
+  });
+
+  it("rejects a negative resale price (the cap is not one-sided)", async () => {
+    const k = (await db.q.listTicketsForHolder(FAN_KWAME_ID))[0];
+    await expect(
+      resaleTicket(db, { ticketId: k.id, sellerId: FAN_KWAME_ID, buyerId: FAN_AMARA_ID, priceCents: -100, buyerRegion: "us" }),
+    ).rejects.toMatchObject({ reason: "resale_invalid_price" });
+  });
+});
+
+describe("sharded counter — no seat stranding across buckets", () => {
+  it("a multi-seat buy draws across buckets when no single bucket holds qty", async () => {
+    await db.reshardSection(FLASH_SECTION_ID, 1000); // 1000 single-seat buckets
+    const r = await buyTickets(db, { buyerId: FAN_ZARA_ID, sectionId: FLASH_SECTION_ID, qty: 4, buyerRegion: "us" });
+    expect(r.ticketIds).toHaveLength(4);
+    expect((await db.q.getSection(FLASH_SECTION_ID))!.remaining).toBe(996);
+  });
+});
+
+describe("idempotency is race-safe (review hardening)", () => {
+  it("concurrent duplicate buys with the same (buyer, key) create exactly one order", async () => {
+    const results = await Promise.allSettled(
+      Array.from({ length: 4 }, () => buy(FAN_AMARA_ID, FLASH_SECTION_ID, 1, "dup-key")),
+    );
+    expect(results.every((r) => r.status === "fulfilled")).toBe(true);
+    const orders = await db.q.listOrders({ buyerId: FAN_AMARA_ID });
+    expect(orders).toHaveLength(1); // no double charge under concurrency
+    const tickets = (await db.q.listTicketsForSection(FLASH_SECTION_ID)).filter((t) => t.holder_user_id === FAN_AMARA_ID);
+    expect(tickets).toHaveLength(1);
+  });
+});
+
 describe("reconciliation invariant across mixed operations", () => {
   it("held + Σrelease + Σrefund = Σhold for every order", async () => {
     const ids: string[] = [];

@@ -27,6 +27,11 @@ export interface BuyResult {
   idempotentReplay?: boolean;
 }
 
+/** Hard ceiling on tickets per order (defense-in-depth; tier caps are lower). */
+const MAX_QTY = 50;
+const isUniqueViolation = (err: unknown) => (err as { code?: string })?.code === "23505";
+const validQty = (qty: number) => Number.isInteger(qty) && qty >= 1 && qty <= MAX_QTY;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // T1 — BUY TICKETS + HOLD ESCROW (no oversell + verified-fan gate, atomic)
 //
@@ -43,6 +48,9 @@ export async function buyTickets(
   retry?: RetryOptions,
 ): Promise<BuyResult> {
   const { buyerId, sectionId, qty, buyerRegion } = input;
+  // Reject negative / non-integer / absurd quantities BEFORE any read — a
+  // negative qty would otherwise invert the inventory math and mint phantom seats.
+  if (!validQty(qty)) throw new BlockedError("invalid_quantity");
   const key = input.idempotencyKey ?? null;
   let amountCents = 0;
   let ticketIds: string[] = [];
@@ -57,7 +65,7 @@ export async function buyTickets(
           // Idempotency: a duplicate submission after a lost response returns the
           // original order instead of creating a second one.
           if (key) {
-            const existing = await backend.repo.findOrderByIdempotencyKey(tx, key);
+            const existing = await backend.repo.findOrderByIdempotencyKey(tx, buyerId, key);
             if (existing) {
               idempotentReplay = true;
               amountCents = existing.amount_cents;
@@ -120,6 +128,12 @@ export async function buyTickets(
       { ...retry, onRetry: (a, e) => { conflictsSeen++; retry?.onRetry?.(a, e); } },
     );
   } catch (err) {
+    // SQL/DSQL: a concurrent duplicate (buyer, key) lost the unique-index race.
+    // Re-read and return the winner's order — idempotent, no double charge.
+    if (key && isUniqueViolation(err)) {
+      const existing = await backend.transaction((tx) => backend.repo.findOrderByIdempotencyKey(tx, buyerId, key));
+      if (existing) return { orderId: existing.id, amountCents: existing.amount_cents, ticketIds: [], attempts: 1, conflicts: conflictsSeen, idempotentReplay: true };
+    }
     if (err instanceof BlockedError) (err as BlockedError & { conflicts?: number }).conflicts = conflictsSeen;
     throw err;
   }
@@ -138,6 +152,7 @@ export async function buyTickets(
 // ─────────────────────────────────────────────────────────────────────────────
 export async function buyTicketsNaive(backend: Backend, input: BuyInput): Promise<BuyResult> {
   const { buyerId, sectionId, qty, buyerRegion } = input;
+  if (!validQty(qty)) throw new BlockedError("invalid_quantity");
   const tx = backend.autocommitTx();
 
   const section = await backend.repo.readSectionForUpdate(tx, sectionId);
@@ -280,6 +295,11 @@ export async function resaleTicket(
     result = await retryOnConflict(
       () =>
         backend.transaction(async (tx) => {
+          // Reject negative / non-integer prices (the cap is one-sided otherwise:
+          // a negative price would mint a negative escrow hold and corrupt the books).
+          if (!Number.isInteger(input.priceCents) || input.priceCents < 0) {
+            throw new BlockedError("resale_invalid_price");
+          }
           const ticket = await backend.repo.readTicketForUpdate(tx, input.ticketId);
           if (!ticket) throw new BlockedError("ticket_not_found");
           if (ticket.holder_user_id !== input.sellerId || ticket.state !== "valid") {
