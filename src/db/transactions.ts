@@ -289,16 +289,22 @@ export async function resaleTicket(
   input: ResaleInput,
   retry?: RetryOptions,
 ): Promise<{ orderId: string; attempts: number; conflicts: number }> {
+  // Reject negative / non-integer prices (the cap is one-sided otherwise:
+  // a negative price would mint a negative escrow hold and corrupt the books).
+  if (!Number.isInteger(input.priceCents) || input.priceCents < 0) {
+    throw new BlockedError("resale_invalid_price");
+  }
+  const key = input.idempotencyKey ?? null;
   let conflictsSeen = 0;
   let result;
   try {
     result = await retryOnConflict(
       () =>
         backend.transaction(async (tx) => {
-          // Reject negative / non-integer prices (the cap is one-sided otherwise:
-          // a negative price would mint a negative escrow hold and corrupt the books).
-          if (!Number.isInteger(input.priceCents) || input.priceCents < 0) {
-            throw new BlockedError("resale_invalid_price");
+          // Idempotency: a duplicate resale submission returns the original order.
+          if (key) {
+            const existing = await backend.repo.findOrderByIdempotencyKey(tx, input.buyerId, key);
+            if (existing) return existing.id;
           }
           const ticket = await backend.repo.readTicketForUpdate(tx, input.ticketId);
           if (!ticket) throw new BlockedError("ticket_not_found");
@@ -330,6 +336,11 @@ export async function resaleTicket(
       { ...retry, onRetry: (a, e) => { conflictsSeen++; retry?.onRetry?.(a, e); } },
     );
   } catch (err) {
+    // Same-buyer duplicate resale lost the unique-index race → return the winner.
+    if (key && isUniqueViolation(err)) {
+      const existing = await backend.transaction((tx) => backend.repo.findOrderByIdempotencyKey(tx, input.buyerId, key));
+      if (existing) return { orderId: existing.id, attempts: 1, conflicts: conflictsSeen };
+    }
     if (err instanceof BlockedError) (err as BlockedError & { conflicts?: number }).conflicts = conflictsSeen;
     throw err;
   }

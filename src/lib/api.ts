@@ -1,5 +1,14 @@
 import { BlockedError, isConflict } from "../db/errors";
 
+/**
+ * Demo controls (/api/reset, /api/load) wipe + reseed the database, so they are
+ * gated by a flag. Enabled by default (the showpiece needs reset); set
+ * DEMO_MODE=off on a hardened deployment to disable the destructive endpoints.
+ */
+export function demoControlsEnabled() {
+  return process.env.DEMO_MODE !== "off";
+}
+
 /** JSON success envelope. */
 export function ok(data: Record<string, unknown> = {}) {
   return Response.json({ ok: true, ...data });

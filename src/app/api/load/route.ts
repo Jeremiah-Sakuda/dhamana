@@ -2,6 +2,7 @@ import { getRegions } from "@/db";
 import { buyTickets } from "@/db/transactions";
 import { FLASH_SECTION_ID } from "@/data/seed";
 import { uuidv7 } from "@/lib/uuidv7";
+import { demoControlsEnabled, fail } from "@/lib/api";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -12,6 +13,7 @@ export const maxDuration = 60;
  * throughput + oversell for each. N is capped to keep the request bounded.
  */
 export async function POST(req: Request) {
+  if (!demoControlsEnabled()) return fail(403, "demo controls disabled (DEMO_MODE=off)");
   const body = await req.json().catch(() => ({}));
   const n = Math.min(Math.max(Number(body.n ?? 120), 10), 400);
   const configs: number[] = Array.isArray(body.buckets) ? body.buckets : [1, 16, 64];

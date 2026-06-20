@@ -168,6 +168,15 @@ describe("T4 — escrowed resale: price cap + no double-sell", () => {
     const resaleOrders = (await db.q.listOrders()).filter((o) => o.kind === "resale");
     expect(resaleOrders).toHaveLength(1);
   });
+
+  it("a duplicate resale submission with the same key replays (no error, one order)", async () => {
+    const k = (await db.q.listTicketsForHolder(FAN_KWAME_ID))[0];
+    const price = Math.min(k.resale_price_cap_cents, 20000);
+    const a = await resaleTicket(db, { ticketId: k.id, sellerId: FAN_KWAME_ID, buyerId: FAN_AMARA_ID, priceCents: price, buyerRegion: "us", idempotencyKey: "resale-key" });
+    const b = await resaleTicket(db, { ticketId: k.id, sellerId: FAN_KWAME_ID, buyerId: FAN_AMARA_ID, priceCents: price, buyerRegion: "us", idempotencyKey: "resale-key" });
+    expect(b.orderId).toBe(a.orderId); // replay, not not_ticket_holder
+    expect((await db.q.listOrders()).filter((o) => o.kind === "resale")).toHaveLength(1);
+  });
 });
 
 describe("input validation (review hardening)", () => {
