@@ -18,7 +18,7 @@ const sans = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "Verdict — the fair-drop engine",
+  title: "Dhamana — the fair-drop engine",
   description:
     "Fair-drop ticketing where you cannot oversell a seat, resell a ticket twice, or buy without being a verified fan — enforced at commit on Amazon Aurora DSQL, across active-active regions, at flash-drop scale.",
 };
@@ -44,7 +44,7 @@ export default function RootLayout({
           <footer className="footer">
             <div className="container between wrap">
               <span>
-                Verdict — fair allocation of scarce things, enforced as database
+                Dhamana — fair allocation of scarce things, enforced as database
                 invariants on Amazon Aurora DSQL.
               </span>
               <span className="row wrap" style={{ gap: 12 }}>

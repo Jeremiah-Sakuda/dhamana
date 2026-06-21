@@ -5,7 +5,7 @@ import { TIERS, resaleCapCents, platformFeeCents, RESALE_SPREAD_BPS } from "../l
 import type { Backend, EscrowEntry, FanTier, Order, Ticket } from "./types";
 
 /**
- * Verdict's load-bearing transactions, written once against the Repo interface
+ * Dhamana's load-bearing transactions, written once against the Repo interface
  * and run unchanged on memory / postgres / DSQL. Every guarded path flows through
  * retryOnConflict, so a commit-time 40001 retries against fresh state and the app
  * fails safe without hand-written conflict handling at each call site.

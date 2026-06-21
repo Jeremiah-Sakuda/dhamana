@@ -95,19 +95,19 @@ export class SqlBackend implements Backend {
     return {
       readSectionForUpdate: async (tx, id): Promise<SectionSnapshot | null> => {
         const sql = (tx as SqlTx).sql;
-        const rows = await sql`select id, event_id, price_cents, currency, seat_count, status from verdict.sections where id = ${id}`;
+        const rows = await sql`select id, event_id, price_cents, currency, seat_count, status from dhamana.sections where id = ${id}`;
         if (!rows.length) return null;
         const r = rows[0];
         return { id: r.id, event_id: r.event_id, price_cents: n(r.price_cents), currency: r.currency, seat_count: n(r.seat_count), status: r.status };
       },
       readFanTier: async (tx, userId): Promise<FanTier | null> => {
         const sql = (tx as SqlTx).sql;
-        const rows = await sql`select fan_tier from verdict.users where id = ${userId}`;
+        const rows = await sql`select fan_tier from dhamana.users where id = ${userId}`;
         return rows.length ? (rows[0].fan_tier as FanTier) : null;
       },
       sumSectionRemaining: async (tx, sectionId): Promise<number> => {
         const sql = (tx as SqlTx).sql;
-        const rows = await sql`select coalesce(sum(remaining_count),0)::int as r from verdict.section_stock_buckets where section_id = ${sectionId}`;
+        const rows = await sql`select coalesce(sum(remaining_count),0)::int as r from dhamana.section_stock_buckets where section_id = ${sectionId}`;
         return n(rows[0].r);
       },
       takeFromBucket: async (tx, sectionId, qty): Promise<boolean> => {
@@ -116,19 +116,19 @@ export class SqlBackend implements Backend {
         // below qty-per-bucket. Each per-bucket UPDATE is its own conflict point
         // DSQL arbitrates at commit; `random()` spreads selection so distinct
         // buckets don't conflict. Fail only if the TOTAL is < qty.
-        const totalRow = await sql`select coalesce(sum(remaining_count),0)::int as r from verdict.section_stock_buckets where section_id = ${sectionId}`;
+        const totalRow = await sql`select coalesce(sum(remaining_count),0)::int as r from dhamana.section_stock_buckets where section_id = ${sectionId}`;
         if (n(totalRow[0].r) < qty) return false;
         let need = qty;
         for (let guard = 0; need > 0 && guard < 512; guard++) {
           const pick = await sql`
-            select bucket_no, remaining_count from verdict.section_stock_buckets
+            select bucket_no, remaining_count from dhamana.section_stock_buckets
             where section_id = ${sectionId} and remaining_count > 0
             order by random() limit 1`;
           if (!pick.length) break;
           const bn = n(pick[0].bucket_no);
           const take = Math.min(n(pick[0].remaining_count), need);
           const res = await sql`
-            update verdict.section_stock_buckets
+            update dhamana.section_stock_buckets
             set remaining_count = remaining_count - ${take}
             where section_id = ${sectionId} and bucket_no = ${bn} and remaining_count >= ${take}`;
           if ((res.count ?? 0) > 0) need -= take;
@@ -137,56 +137,56 @@ export class SqlBackend implements Backend {
       },
       setSectionStatus: async (tx, sectionId, status) => {
         const sql = (tx as SqlTx).sql;
-        await sql`update verdict.sections set status = ${status} where id = ${sectionId}`;
+        await sql`update dhamana.sections set status = ${status} where id = ${sectionId}`;
       },
       countOrdersForSection: async (tx, sectionId): Promise<number> => {
         const sql = (tx as SqlTx).sql;
-        const rows = await sql`select count(*)::int as c from verdict.orders where section_id = ${sectionId}`;
+        const rows = await sql`select count(*)::int as c from dhamana.orders where section_id = ${sectionId}`;
         return n(rows[0].c);
       },
       countBuyerTicketsForEvent: async (tx, buyerId, eventId): Promise<number> => {
         const sql = (tx as SqlTx).sql;
-        const rows = await sql`select count(*)::int as c from verdict.tickets where holder_user_id = ${buyerId} and event_id = ${eventId} and state in ('held','valid')`;
+        const rows = await sql`select count(*)::int as c from dhamana.tickets where holder_user_id = ${buyerId} and event_id = ${eventId} and state in ('held','valid')`;
         return n(rows[0].c);
       },
       insertOrder: async (tx, o: Order) => {
         const sql = (tx as SqlTx).sql;
-        await sql`insert into verdict.orders (id, buyer_id, event_id, section_id, kind, qty, amount_cents, currency, status, buyer_region, idempotency_key, created_at, updated_at)
+        await sql`insert into dhamana.orders (id, buyer_id, event_id, section_id, kind, qty, amount_cents, currency, status, buyer_region, idempotency_key, created_at, updated_at)
           values (${o.id}, ${o.buyer_id}, ${o.event_id}, ${o.section_id}, ${o.kind}, ${o.qty}, ${o.amount_cents}, ${o.currency}, ${o.status}, ${o.buyer_region}, ${o.idempotency_key}, ${o.created_at}, ${o.updated_at})`;
       },
       insertEscrowAccount: async (tx, a: EscrowAccount) => {
         const sql = (tx as SqlTx).sql;
-        await sql`insert into verdict.escrow_accounts (order_id, held_cents, state, updated_at) values (${a.order_id}, ${a.held_cents}, ${a.state}, ${a.updated_at})`;
+        await sql`insert into dhamana.escrow_accounts (order_id, held_cents, state, updated_at) values (${a.order_id}, ${a.held_cents}, ${a.state}, ${a.updated_at})`;
       },
       insertEscrowEntry: async (tx, e: EscrowEntry) => {
         const sql = (tx as SqlTx).sql;
-        await sql`insert into verdict.escrow_entries (id, order_id, entry_type, amount_cents, balance_after_cents, created_at) values (${e.id}, ${e.order_id}, ${e.entry_type}, ${e.amount_cents}, ${e.balance_after_cents}, ${e.created_at})`;
+        await sql`insert into dhamana.escrow_entries (id, order_id, entry_type, amount_cents, balance_after_cents, created_at) values (${e.id}, ${e.order_id}, ${e.entry_type}, ${e.amount_cents}, ${e.balance_after_cents}, ${e.created_at})`;
       },
       insertTicket: async (tx, t: Ticket) => {
         const sql = (tx as SqlTx).sql;
-        await sql`insert into verdict.tickets (id, order_id, section_id, event_id, seat_label, holder_user_id, state, resale_price_cap_cents, created_at)
+        await sql`insert into dhamana.tickets (id, order_id, section_id, event_id, seat_label, holder_user_id, state, resale_price_cap_cents, created_at)
           values (${t.id}, ${t.order_id}, ${t.section_id}, ${t.event_id}, ${t.seat_label}, ${t.holder_user_id}, ${t.state}, ${t.resale_price_cap_cents}, ${t.created_at})`;
       },
       readEscrowAccountForUpdate: async (tx, orderId): Promise<EscrowAccount | null> => {
         const sql = (tx as SqlTx).sql;
-        const rows = await sql`select order_id, held_cents, state, updated_at from verdict.escrow_accounts where order_id = ${orderId}`;
+        const rows = await sql`select order_id, held_cents, state, updated_at from dhamana.escrow_accounts where order_id = ${orderId}`;
         return rows.length ? toEscrow(rows[0]) : null;
       },
       setEscrowAccount: async (tx, orderId, heldCents, state) => {
         const sql = (tx as SqlTx).sql;
-        await sql`update verdict.escrow_accounts set held_cents = ${heldCents}, state = ${state}, updated_at = now() where order_id = ${orderId}`;
+        await sql`update dhamana.escrow_accounts set held_cents = ${heldCents}, state = ${state}, updated_at = now() where order_id = ${orderId}`;
       },
       setOrderStatus: async (tx, orderId, status) => {
         const sql = (tx as SqlTx).sql;
-        await sql`update verdict.orders set status = ${status}, updated_at = now() where id = ${orderId}`;
+        await sql`update dhamana.orders set status = ${status}, updated_at = now() where id = ${orderId}`;
       },
       voidTicketsForOrder: async (tx, orderId) => {
         const sql = (tx as SqlTx).sql;
-        await sql`update verdict.tickets set state = 'void' where order_id = ${orderId}`;
+        await sql`update dhamana.tickets set state = 'void' where order_id = ${orderId}`;
       },
       readTicketForUpdate: async (tx, ticketId): Promise<Ticket | null> => {
         const sql = (tx as SqlTx).sql;
-        const rows = await sql`select * from verdict.tickets where id = ${ticketId}`;
+        const rows = await sql`select * from dhamana.tickets where id = ${ticketId}`;
         return rows.length ? toTicket(rows[0]) : null;
       },
       transferTicket: async (tx, ticketId, expectedHolderId, newHolderId, state): Promise<boolean> => {
@@ -194,26 +194,26 @@ export class SqlBackend implements Backend {
         // Self-defending: only moves the ticket if it still has the expected
         // holder + 'valid' state, so the write itself can't double-sell.
         const res = await sql`
-          update verdict.tickets set holder_user_id = ${newHolderId}, state = ${state}
+          update dhamana.tickets set holder_user_id = ${newHolderId}, state = ${state}
           where id = ${ticketId} and holder_user_id = ${expectedHolderId} and state = 'valid'`;
         return (res.count ?? 0) > 0;
       },
       insertVerification: async (tx, v: Verification) => {
         const sql = (tx as SqlTx).sql;
-        await sql`insert into verdict.verifications (id, subject_id, subject_kind, tier, method, evidence_url, status, reviewed_by, created_at, decided_at)
+        await sql`insert into dhamana.verifications (id, subject_id, subject_kind, tier, method, evidence_url, status, reviewed_by, created_at, decided_at)
           values (${v.id}, ${v.subject_id}, ${v.subject_kind}, ${v.tier}, ${v.method}, ${v.evidence_url}, ${v.status}, ${v.reviewed_by}, ${v.created_at}, ${v.decided_at})`;
       },
       updateFanTier: async (tx, userId, tier) => {
         const sql = (tx as SqlTx).sql;
-        await sql`update verdict.users set fan_tier = ${tier} where id = ${userId}`;
+        await sql`update dhamana.users set fan_tier = ${tier} where id = ${userId}`;
       },
       setPromoterVerified: async (tx, promoterId, verified) => {
         const sql = (tx as SqlTx).sql;
-        await sql`update verdict.promoters set verified = ${verified} where user_id = ${promoterId}`;
+        await sql`update dhamana.promoters set verified = ${verified} where user_id = ${promoterId}`;
       },
       findOrderByIdempotencyKey: async (tx, buyerId, key): Promise<Order | null> => {
         const sql = (tx as SqlTx).sql;
-        const rows = await sql`select * from verdict.orders where buyer_id = ${buyerId} and idempotency_key = ${key} limit 1`;
+        const rows = await sql`select * from dhamana.orders where buyer_id = ${buyerId} and idempotency_key = ${key} limit 1`;
         return rows.length ? toOrder(rows[0]) : null;
       },
     };
@@ -222,78 +222,78 @@ export class SqlBackend implements Backend {
   private makeQueries(): Queries {
     const sql = this.sql;
     const remainingExpr = async (sectionId: string) => {
-      const rows = await sql`select coalesce(sum(remaining_count),0)::int as r from verdict.section_stock_buckets where section_id = ${sectionId}`;
+      const rows = await sql`select coalesce(sum(remaining_count),0)::int as r from dhamana.section_stock_buckets where section_id = ${sectionId}`;
       return n(rows[0].r);
     };
     const promoterById = async (id: string) => {
-      const rows = await sql`select * from verdict.promoters where user_id = ${id}`;
+      const rows = await sql`select * from dhamana.promoters where user_id = ${id}`;
       return toPromoter(rows[0]);
     };
     return {
       listEvents: async () => {
-        const rows = await sql`select * from verdict.events order by created_at`;
+        const rows = await sql`select * from dhamana.events order by created_at`;
         const out = [];
         for (const r of rows) { const e = toEvent(r); out.push({ ...e, promoter: await promoterById(e.promoter_id) }); }
         return out;
       },
       getEvent: async (id) => {
-        const rows = await sql`select * from verdict.events where id = ${id}`;
+        const rows = await sql`select * from dhamana.events where id = ${id}`;
         if (!rows.length) return null;
         const e = toEvent(rows[0]);
         return { ...e, promoter: await promoterById(e.promoter_id) };
       },
       listSections: async (eventId) => {
-        const rows = await sql`select * from verdict.sections where event_id = ${eventId} order by price_cents`;
+        const rows = await sql`select * from dhamana.sections where event_id = ${eventId} order by price_cents`;
         const out = [];
         for (const r of rows) { const s = toSection(r); out.push({ ...s, remaining: await remainingExpr(s.id) }); }
         return out;
       },
       getSection: async (id) => {
-        const rows = await sql`select * from verdict.sections where id = ${id}`;
+        const rows = await sql`select * from dhamana.sections where id = ${id}`;
         if (!rows.length) return null;
         const s = toSection(rows[0]);
-        const ev = await sql`select * from verdict.events where id = ${s.event_id}`;
+        const ev = await sql`select * from dhamana.events where id = ${s.event_id}`;
         return { ...s, remaining: await remainingExpr(id), event: toEvent(ev[0]) };
       },
-      getUser: async (id) => { const rows = await sql`select * from verdict.users where id = ${id}`; return rows.length ? toUser(rows[0]) : null; },
-      listFans: async () => { const rows = await sql`select * from verdict.users where role = 'fan' order by display_name`; return rows.map(toUser); },
-      getPromoter: async (id) => { const rows = await sql`select * from verdict.promoters where user_id = ${id}`; return rows.length ? toPromoter(rows[0]) : null; },
-      listPromoters: async () => { const rows = await sql`select * from verdict.promoters order by org_name`; return rows.map(toPromoter); },
-      getOrder: async (id) => { const rows = await sql`select * from verdict.orders where id = ${id}`; return rows.length ? toOrder(rows[0]) : null; },
+      getUser: async (id) => { const rows = await sql`select * from dhamana.users where id = ${id}`; return rows.length ? toUser(rows[0]) : null; },
+      listFans: async () => { const rows = await sql`select * from dhamana.users where role = 'fan' order by display_name`; return rows.map(toUser); },
+      getPromoter: async (id) => { const rows = await sql`select * from dhamana.promoters where user_id = ${id}`; return rows.length ? toPromoter(rows[0]) : null; },
+      listPromoters: async () => { const rows = await sql`select * from dhamana.promoters order by org_name`; return rows.map(toPromoter); },
+      getOrder: async (id) => { const rows = await sql`select * from dhamana.orders where id = ${id}`; return rows.length ? toOrder(rows[0]) : null; },
       listOrders: async (opts) => {
         let rows;
-        if (opts?.buyerId) rows = await sql`select * from verdict.orders where buyer_id = ${opts.buyerId} order by created_at desc`;
-        else if (opts?.eventId) rows = await sql`select * from verdict.orders where event_id = ${opts.eventId} order by created_at desc`;
-        else rows = await sql`select * from verdict.orders order by created_at desc`;
+        if (opts?.buyerId) rows = await sql`select * from dhamana.orders where buyer_id = ${opts.buyerId} order by created_at desc`;
+        else if (opts?.eventId) rows = await sql`select * from dhamana.orders where event_id = ${opts.eventId} order by created_at desc`;
+        else rows = await sql`select * from dhamana.orders order by created_at desc`;
         return rows.map(toOrder);
       },
-      getEscrowAccount: async (orderId) => { const rows = await sql`select * from verdict.escrow_accounts where order_id = ${orderId}`; return rows.length ? toEscrow(rows[0]) : null; },
+      getEscrowAccount: async (orderId) => { const rows = await sql`select * from dhamana.escrow_accounts where order_id = ${orderId}`; return rows.length ? toEscrow(rows[0]) : null; },
       listEscrowEntries: async (orderId) => {
-        const rows = await sql`select * from verdict.escrow_entries where order_id = ${orderId} order by created_at`;
+        const rows = await sql`select * from dhamana.escrow_entries where order_id = ${orderId} order by created_at`;
         return rows.map((r) => ({ id: r.id, order_id: r.order_id, entry_type: r.entry_type, amount_cents: n(r.amount_cents), balance_after_cents: n(r.balance_after_cents), created_at: iso(r.created_at) }));
       },
       listVerifications: async (opts) => {
         let rows;
-        if (opts?.subjectId && opts?.status) rows = await sql`select * from verdict.verifications where subject_id = ${opts.subjectId} and status = ${opts.status} order by created_at desc`;
-        else if (opts?.subjectId) rows = await sql`select * from verdict.verifications where subject_id = ${opts.subjectId} order by created_at desc`;
-        else if (opts?.status) rows = await sql`select * from verdict.verifications where status = ${opts.status} order by created_at desc`;
-        else rows = await sql`select * from verdict.verifications order by created_at desc`;
+        if (opts?.subjectId && opts?.status) rows = await sql`select * from dhamana.verifications where subject_id = ${opts.subjectId} and status = ${opts.status} order by created_at desc`;
+        else if (opts?.subjectId) rows = await sql`select * from dhamana.verifications where subject_id = ${opts.subjectId} order by created_at desc`;
+        else if (opts?.status) rows = await sql`select * from dhamana.verifications where status = ${opts.status} order by created_at desc`;
+        else rows = await sql`select * from dhamana.verifications order by created_at desc`;
         return rows.map(toVerification);
       },
-      getTicket: async (id) => { const rows = await sql`select * from verdict.tickets where id = ${id}`; return rows.length ? toTicket(rows[0]) : null; },
+      getTicket: async (id) => { const rows = await sql`select * from dhamana.tickets where id = ${id}`; return rows.length ? toTicket(rows[0]) : null; },
       listTicketsForHolder: async (holderId) => {
-        const rows = await sql`select * from verdict.tickets where holder_user_id = ${holderId} order by created_at desc`;
+        const rows = await sql`select * from dhamana.tickets where holder_user_id = ${holderId} order by created_at desc`;
         const out = [];
         for (const r of rows) {
           const t = toTicket(r);
-          const ev = await sql`select * from verdict.events where id = ${t.event_id}`;
-          const se = await sql`select * from verdict.sections where id = ${t.section_id}`;
+          const ev = await sql`select * from dhamana.events where id = ${t.event_id}`;
+          const se = await sql`select * from dhamana.sections where id = ${t.section_id}`;
           out.push({ ...t, event: toEvent(ev[0]), section: toSection(se[0]) });
         }
         return out;
       },
-      listTicketsForSection: async (sectionId) => { const rows = await sql`select * from verdict.tickets where section_id = ${sectionId}`; return rows.map(toTicket); },
-      bucketCount: async (sectionId) => { const rows = await sql`select count(*)::int as c from verdict.section_stock_buckets where section_id = ${sectionId}`; return n(rows[0].c); },
+      listTicketsForSection: async (sectionId) => { const rows = await sql`select * from dhamana.tickets where section_id = ${sectionId}`; return rows.map(toTicket); },
+      bucketCount: async (sectionId) => { const rows = await sql`select count(*)::int as c from dhamana.section_stock_buckets where section_id = ${sectionId}`; return n(rows[0].c); },
     };
   }
 
@@ -324,7 +324,7 @@ export class SqlBackend implements Backend {
   private async seedIfEmpty(): Promise<void> {
     // Gate on a CONTENT table (sections), not users — a partial wipe can leave
     // users while the catalog is gone, which must still trigger a reseed.
-    const rows = await this.sql`select count(*)::int as c from verdict.sections`;
+    const rows = await this.sql`select count(*)::int as c from dhamana.sections`;
     if (n(rows[0].c) > 0) return;
     await this.seedRows();
   }
@@ -338,33 +338,33 @@ export class SqlBackend implements Backend {
         if (!/duplicate|already exists|unique/i.test((e as Error).message ?? "")) throw e;
       }
     };
-    for (const u of d.users) await ins(this.sql`insert into verdict.users (id, role, display_name, email, home_region, fan_tier, created_at) values (${u.id}, ${u.role}, ${u.display_name}, ${u.email}, ${u.home_region}, ${u.fan_tier}, ${u.created_at})`);
-    for (const p of d.promoters) await ins(this.sql`insert into verdict.promoters (user_id, org_name, country, verified, created_at) values (${p.user_id}, ${p.org_name}, ${p.country}, ${p.verified}, ${p.created_at})`);
-    for (const v of d.verifications) await ins(this.sql`insert into verdict.verifications (id, subject_id, subject_kind, tier, method, evidence_url, status, reviewed_by, created_at, decided_at) values (${v.id}, ${v.subject_id}, ${v.subject_kind}, ${v.tier}, ${v.method}, ${v.evidence_url}, ${v.status}, ${v.reviewed_by}, ${v.created_at}, ${v.decided_at})`);
-    for (const e of d.events) await ins(this.sql`insert into verdict.events (id, promoter_id, name, venue, starts_at, status, created_at) values (${e.id}, ${e.promoter_id}, ${e.name}, ${e.venue}, ${e.starts_at}, ${e.status}, ${e.created_at})`);
-    for (const s of d.sections) await ins(this.sql`insert into verdict.sections (id, event_id, name, price_cents, currency, seat_count, status, created_at) values (${s.id}, ${s.event_id}, ${s.name}, ${s.price_cents}, ${s.currency}, ${s.seat_count}, ${s.status}, ${s.created_at})`);
-    for (const b of d.buckets) await ins(this.sql`insert into verdict.section_stock_buckets (section_id, bucket_no, remaining_count) values (${b.section_id}, ${b.bucket_no}, ${b.remaining_count})`);
-    for (const o of d.orders) await ins(this.sql`insert into verdict.orders (id, buyer_id, event_id, section_id, kind, qty, amount_cents, currency, status, buyer_region, idempotency_key, created_at, updated_at) values (${o.id}, ${o.buyer_id}, ${o.event_id}, ${o.section_id}, ${o.kind}, ${o.qty}, ${o.amount_cents}, ${o.currency}, ${o.status}, ${o.buyer_region}, ${o.idempotency_key}, ${o.created_at}, ${o.updated_at})`);
-    for (const a of d.escrowAccounts) await ins(this.sql`insert into verdict.escrow_accounts (order_id, held_cents, state, updated_at) values (${a.order_id}, ${a.held_cents}, ${a.state}, ${a.updated_at})`);
-    for (const e of d.escrowEntries) await ins(this.sql`insert into verdict.escrow_entries (id, order_id, entry_type, amount_cents, balance_after_cents, created_at) values (${e.id}, ${e.order_id}, ${e.entry_type}, ${e.amount_cents}, ${e.balance_after_cents}, ${e.created_at})`);
-    for (const t of d.tickets) await ins(this.sql`insert into verdict.tickets (id, order_id, section_id, event_id, seat_label, holder_user_id, state, resale_price_cap_cents, created_at) values (${t.id}, ${t.order_id}, ${t.section_id}, ${t.event_id}, ${t.seat_label}, ${t.holder_user_id}, ${t.state}, ${t.resale_price_cap_cents}, ${t.created_at})`);
+    for (const u of d.users) await ins(this.sql`insert into dhamana.users (id, role, display_name, email, home_region, fan_tier, created_at) values (${u.id}, ${u.role}, ${u.display_name}, ${u.email}, ${u.home_region}, ${u.fan_tier}, ${u.created_at})`);
+    for (const p of d.promoters) await ins(this.sql`insert into dhamana.promoters (user_id, org_name, country, verified, created_at) values (${p.user_id}, ${p.org_name}, ${p.country}, ${p.verified}, ${p.created_at})`);
+    for (const v of d.verifications) await ins(this.sql`insert into dhamana.verifications (id, subject_id, subject_kind, tier, method, evidence_url, status, reviewed_by, created_at, decided_at) values (${v.id}, ${v.subject_id}, ${v.subject_kind}, ${v.tier}, ${v.method}, ${v.evidence_url}, ${v.status}, ${v.reviewed_by}, ${v.created_at}, ${v.decided_at})`);
+    for (const e of d.events) await ins(this.sql`insert into dhamana.events (id, promoter_id, name, venue, starts_at, status, created_at) values (${e.id}, ${e.promoter_id}, ${e.name}, ${e.venue}, ${e.starts_at}, ${e.status}, ${e.created_at})`);
+    for (const s of d.sections) await ins(this.sql`insert into dhamana.sections (id, event_id, name, price_cents, currency, seat_count, status, created_at) values (${s.id}, ${s.event_id}, ${s.name}, ${s.price_cents}, ${s.currency}, ${s.seat_count}, ${s.status}, ${s.created_at})`);
+    for (const b of d.buckets) await ins(this.sql`insert into dhamana.section_stock_buckets (section_id, bucket_no, remaining_count) values (${b.section_id}, ${b.bucket_no}, ${b.remaining_count})`);
+    for (const o of d.orders) await ins(this.sql`insert into dhamana.orders (id, buyer_id, event_id, section_id, kind, qty, amount_cents, currency, status, buyer_region, idempotency_key, created_at, updated_at) values (${o.id}, ${o.buyer_id}, ${o.event_id}, ${o.section_id}, ${o.kind}, ${o.qty}, ${o.amount_cents}, ${o.currency}, ${o.status}, ${o.buyer_region}, ${o.idempotency_key}, ${o.created_at}, ${o.updated_at})`);
+    for (const a of d.escrowAccounts) await ins(this.sql`insert into dhamana.escrow_accounts (order_id, held_cents, state, updated_at) values (${a.order_id}, ${a.held_cents}, ${a.state}, ${a.updated_at})`);
+    for (const e of d.escrowEntries) await ins(this.sql`insert into dhamana.escrow_entries (id, order_id, entry_type, amount_cents, balance_after_cents, created_at) values (${e.id}, ${e.order_id}, ${e.entry_type}, ${e.amount_cents}, ${e.balance_after_cents}, ${e.created_at})`);
+    for (const t of d.tickets) await ins(this.sql`insert into dhamana.tickets (id, order_id, section_id, event_id, seat_label, holder_user_id, state, resale_price_cap_cents, created_at) values (${t.id}, ${t.order_id}, ${t.section_id}, ${t.event_id}, ${t.seat_label}, ${t.holder_user_id}, ${t.state}, ${t.resale_price_cap_cents}, ${t.created_at})`);
   }
 
   async reset(): Promise<void> {
     // Best-effort wipe (small demo data, well under the 3000-row/txn limit), then
     // ALWAYS reseed — so a partial/aborted reset can never strand an empty catalog.
     for (const t of ["tickets", "escrow_entries", "escrow_accounts", "orders", "section_stock_buckets", "sections", "events", "verifications", "promoters", "users"]) {
-      try { await this.sql.unsafe(`delete from verdict.${t}`); } catch { /* tolerate */ }
+      try { await this.sql.unsafe(`delete from dhamana.${t}`); } catch { /* tolerate */ }
     }
     await this.seedRows();
   }
 
   async reshardSection(sectionId: string, buckets: number): Promise<void> {
-    const rows = await this.sql`select coalesce(sum(remaining_count),0)::int as r from verdict.section_stock_buckets where section_id = ${sectionId}`;
+    const rows = await this.sql`select coalesce(sum(remaining_count),0)::int as r from dhamana.section_stock_buckets where section_id = ${sectionId}`;
     const total = n(rows[0].r);
-    await this.sql`delete from verdict.section_stock_buckets where section_id = ${sectionId}`;
+    await this.sql`delete from dhamana.section_stock_buckets where section_id = ${sectionId}`;
     for (const b of makeBuckets(sectionId, total, buckets)) {
-      await this.sql`insert into verdict.section_stock_buckets (section_id, bucket_no, remaining_count) values (${b.section_id}, ${b.bucket_no}, ${b.remaining_count})`;
+      await this.sql`insert into dhamana.section_stock_buckets (section_id, bucket_no, remaining_count) values (${b.section_id}, ${b.bucket_no}, ${b.remaining_count})`;
     }
   }
 

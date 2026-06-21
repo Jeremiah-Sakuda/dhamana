@@ -45,7 +45,7 @@ async function runConfig(buckets: number) {
 
 async function main() {
   const backend = await getBackendName();
-  line(`Verdict load harness — backend=${backend} · ${N} concurrent buyers · 1000-seat section\n`);
+  line(`Dhamana load harness — backend=${backend} · ${N} concurrent buyers · 1000-seat section\n`);
   line("buckets |  ok  | blocked | 40001 retries |   ms  | buys/sec | issued | oversold");
   line("--------+------+---------+---------------+-------+----------+--------+---------");
   for (const b of CONFIGS) {

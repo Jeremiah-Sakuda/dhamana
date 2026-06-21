@@ -13,7 +13,7 @@ import type {
 } from "../db/types";
 
 /**
- * Deterministic seed data for Verdict. Fixed UUIDs keep demo URLs + the race
+ * Deterministic seed data for Dhamana. Fixed UUIDs keep demo URLs + the race
  * harness stable across resets. Highlights:
  *   • HERO_SECTION — exactly 1 seat in 1 bucket; the two-region race fights over it.
  *   • FLASH_SECTION — 1,000 seats sharded into N buckets; the scale benchmark.
@@ -81,7 +81,7 @@ export function makeBuckets(sectionId: string, total: number, n: number): StockB
 
 export function seedData(): SeedData {
   const users: User[] = [
-    { id: ADMIN_ID, role: "admin", display_name: "Reviewer (Trust & Safety)", email: "reviewer@verdict.example", home_region: "us-east-1", fan_tier: "unverified", created_at: T },
+    { id: ADMIN_ID, role: "admin", display_name: "Reviewer (Trust & Safety)", email: "reviewer@dhamana.example", home_region: "us-east-1", fan_tier: "unverified", created_at: T },
     { id: FAN_AMARA_ID, role: "fan", display_name: "Amara Okafor", email: "amara@example.com", home_region: "Atlanta, US", fan_tier: "unverified", created_at: T },
     { id: FAN_KWAME_ID, role: "fan", display_name: "Kwame Mensah", email: "kwame@example.com", home_region: "London, UK", fan_tier: "verified", created_at: T },
     { id: FAN_ZARA_ID, role: "fan", display_name: "Zara Haddad", email: "zara@example.com", home_region: "Toronto, CA", fan_tier: "trusted", created_at: T },

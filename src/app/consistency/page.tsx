@@ -50,13 +50,13 @@ export default function ConsistencyPage() {
       <span className="eyebrow">The showpiece</span>
       <h1 style={{ maxWidth: 760 }}>Two regions race the <span className="hl">last seat.</span></h1>
       <p style={{ maxWidth: 760 }}>
-        A section with one seat left, two fans on two regional endpoints, the same instant. Flip between the naive path and Verdict&rsquo;s guarded path and watch what the database does at commit — then run the flash-drop load test to see it scale.
+        A section with one seat left, two fans on two regional endpoints, the same instant. Flip between the naive path and Dhamana&rsquo;s guarded path and watch what the database does at commit — then run the flash-drop load test to see it scale.
       </p>
 
       <div className="row wrap" style={{ margin: "20px 0", gap: 16 }}>
         <div className="toggle" role="tablist">
           <button className={mode === "naive" ? "on naive" : ""} onClick={() => setMode("naive")}>Naive</button>
-          <button className={mode === "guarded" ? "on" : ""} onClick={() => setMode("guarded")}>Guarded (Verdict)</button>
+          <button className={mode === "guarded" ? "on" : ""} onClick={() => setMode("guarded")}>Guarded (Dhamana)</button>
         </div>
         <button className="btn btn-gold" onClick={fire} disabled={busy}>{busy ? "Racing…" : "Reset & fire the race"}</button>
         <span className="note">backend: <span className="mono">{meta.endpoint ?? meta.backend ?? "…"}</span></span>

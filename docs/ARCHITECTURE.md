@@ -117,7 +117,7 @@ avoid hot-key contention. No assumption of `gen_random_uuid()`.
 
 `postgres.js` + IAM tokens (`@aws-sdk/dsql-signer`), see [`src/db/dsql.ts`](../src/db/dsql.ts):
 `password` is an async function so a fresh token is minted per new physical
-connection; `ssl: require`; `max_lifetime ≈ 50 min`; `search_path = verdict`.
+connection; `ssl: require`; `max_lifetime ≈ 50 min`; `search_path = dhamana`.
 
 ## Guarantees stated precisely (for the skeptical judge)
 

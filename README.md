@@ -1,4 +1,4 @@
-# Verdict — the fair-drop engine
+# Dhamana — the fair-drop engine
 
 > **When 100,000 fans race for 10,000 seats, the database itself guarantees you cannot oversell a seat, cannot resell a ticket twice, and cannot let an account buy past its verified-fan cap — enforced at commit on Amazon Aurora DSQL, across active-active regions, at flash-drop scale.**
 
@@ -8,7 +8,7 @@ Built for **H0: Hack the Zero Stack** (Vercel + AWS Databases) · Track: **Milli
 
 ## The one thing to understand
 
-Ticketing's worst failures — overselling a show, bots sweeping inventory, the same ticket sold to three people, refund leakage — are all enforced today in fragile **application** code that bots route around and that diverges across regions. Verdict makes each one a **database invariant**, un-bypassable at commit:
+Ticketing's worst failures — overselling a show, bots sweeping inventory, the same ticket sold to three people, refund leakage — are all enforced today in fragile **application** code that bots route around and that diverges across regions. Dhamana makes each one a **database invariant**, un-bypassable at commit:
 
 1. **No oversell.** Seats are a sharded, contested counter; two buyers racing the last seat conflict at commit (`SQLSTATE 40001`) and one fails safe.
 2. **No bot sweep.** Buying requires a **verified-fan** record and respects a per-event cap — checked *inside the buy transaction*, not by a UI throttle. The badge is a row, not a label.

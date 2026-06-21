@@ -1,5 +1,5 @@
 /**
- * Verdict schema — the fair-drop engine, designed for Amazon Aurora DSQL.
+ * Dhamana schema — the fair-drop engine, designed for Amazon Aurora DSQL.
  *
  * The DDL lives here as a string (not a .sql file) so it is bundled into the
  * serverless function — Vercel's tracer doesn't ship non-imported asset files,
@@ -19,11 +19,11 @@
  * collapsing on one hot counter. SUM(remaining_count) over a section = seats left.
  */
 export const SCHEMA_SQL = `
-CREATE SCHEMA IF NOT EXISTS verdict;
+CREATE SCHEMA IF NOT EXISTS dhamana;
 
 -- Fans (buyers), promoters, admins. fan_tier is the verified-fan level, written
 -- atomically with a verifications row in T3.
-CREATE TABLE IF NOT EXISTS verdict.users (
+CREATE TABLE IF NOT EXISTS dhamana.users (
   id            uuid        NOT NULL,
   role          text        NOT NULL,
   display_name  text        NOT NULL,
@@ -35,7 +35,7 @@ CREATE TABLE IF NOT EXISTS verdict.users (
   UNIQUE (email)
 );
 
-CREATE TABLE IF NOT EXISTS verdict.promoters (
+CREATE TABLE IF NOT EXISTS dhamana.promoters (
   user_id       uuid        NOT NULL,
   org_name      text        NOT NULL,
   country       text        NOT NULL,
@@ -45,7 +45,7 @@ CREATE TABLE IF NOT EXISTS verdict.promoters (
 );
 
 -- Append-only audit of verification decisions (the badge IS a row).
-CREATE TABLE IF NOT EXISTS verdict.verifications (
+CREATE TABLE IF NOT EXISTS dhamana.verifications (
   id            uuid        NOT NULL,
   subject_id    uuid        NOT NULL,
   subject_kind  text        NOT NULL,
@@ -59,7 +59,7 @@ CREATE TABLE IF NOT EXISTS verdict.verifications (
   PRIMARY KEY (id)
 );
 
-CREATE TABLE IF NOT EXISTS verdict.events (
+CREATE TABLE IF NOT EXISTS dhamana.events (
   id            uuid        NOT NULL,
   promoter_id   uuid        NOT NULL,
   name          text        NOT NULL,
@@ -72,7 +72,7 @@ CREATE TABLE IF NOT EXISTS verdict.events (
 
 -- A seating section. seat_count is the immutable total; live remaining lives in
 -- section_stock_buckets (sharded).
-CREATE TABLE IF NOT EXISTS verdict.sections (
+CREATE TABLE IF NOT EXISTS dhamana.sections (
   id            uuid        NOT NULL,
   event_id      uuid        NOT NULL,
   name          text        NOT NULL,
@@ -87,14 +87,14 @@ CREATE TABLE IF NOT EXISTS verdict.sections (
 -- The SHARDED counter. One hot seat counter -> N warm buckets. T1 takes seats
 -- from a chosen bucket (the contended write DSQL arbitrates at commit);
 -- SUM(remaining_count) per section_id = seats remaining.
-CREATE TABLE IF NOT EXISTS verdict.section_stock_buckets (
+CREATE TABLE IF NOT EXISTS dhamana.section_stock_buckets (
   section_id      uuid      NOT NULL,
   bucket_no       int       NOT NULL,
   remaining_count int       NOT NULL,
   PRIMARY KEY (section_id, bucket_no)
 );
 
-CREATE TABLE IF NOT EXISTS verdict.orders (
+CREATE TABLE IF NOT EXISTS dhamana.orders (
   id              uuid        NOT NULL,
   buyer_id        uuid        NOT NULL,
   event_id        uuid        NOT NULL,
@@ -111,7 +111,7 @@ CREATE TABLE IF NOT EXISTS verdict.orders (
   PRIMARY KEY (id)
 );
 
-CREATE TABLE IF NOT EXISTS verdict.escrow_accounts (
+CREATE TABLE IF NOT EXISTS dhamana.escrow_accounts (
   order_id    uuid        NOT NULL,
   held_cents  bigint      NOT NULL,
   state       text        NOT NULL,
@@ -120,7 +120,7 @@ CREATE TABLE IF NOT EXISTS verdict.escrow_accounts (
 );
 
 -- Append-only escrow ledger. Reconciliation: held + Σ release + Σ refund = Σ hold.
-CREATE TABLE IF NOT EXISTS verdict.escrow_entries (
+CREATE TABLE IF NOT EXISTS dhamana.escrow_entries (
   id                  uuid        NOT NULL,
   order_id            uuid        NOT NULL,
   entry_type          text        NOT NULL,
@@ -132,7 +132,7 @@ CREATE TABLE IF NOT EXISTS verdict.escrow_entries (
 
 -- A ticket is a CAPABILITY row: its holder + state move atomically in T4, so the
 -- same ticket can never be valid for two holders (anti double-sale).
-CREATE TABLE IF NOT EXISTS verdict.tickets (
+CREATE TABLE IF NOT EXISTS dhamana.tickets (
   id                     uuid        NOT NULL,
   order_id               uuid        NOT NULL,
   section_id             uuid        NOT NULL,
@@ -146,17 +146,17 @@ CREATE TABLE IF NOT EXISTS verdict.tickets (
 );
 
 -- Secondary indexes (non-blocking async builds on DSQL).
-CREATE INDEX ASYNC IF NOT EXISTS sections_event_idx        ON verdict.sections (event_id);
-CREATE INDEX ASYNC IF NOT EXISTS events_promoter_idx       ON verdict.events (promoter_id);
-CREATE INDEX ASYNC IF NOT EXISTS orders_buyer_idx          ON verdict.orders (buyer_id);
-CREATE INDEX ASYNC IF NOT EXISTS orders_event_idx          ON verdict.orders (event_id);
-CREATE INDEX ASYNC IF NOT EXISTS orders_section_idx        ON verdict.orders (section_id);
+CREATE INDEX ASYNC IF NOT EXISTS sections_event_idx        ON dhamana.sections (event_id);
+CREATE INDEX ASYNC IF NOT EXISTS events_promoter_idx       ON dhamana.events (promoter_id);
+CREATE INDEX ASYNC IF NOT EXISTS orders_buyer_idx          ON dhamana.orders (buyer_id);
+CREATE INDEX ASYNC IF NOT EXISTS orders_event_idx          ON dhamana.orders (event_id);
+CREATE INDEX ASYNC IF NOT EXISTS orders_section_idx        ON dhamana.orders (section_id);
 -- UNIQUE so a duplicate (buyer, idempotency_key) insert is rejected by the DB
 -- (NULLs are distinct, so keyless orders are unconstrained). The race-safe guard.
-CREATE UNIQUE INDEX ASYNC IF NOT EXISTS orders_idem_uidx     ON verdict.orders (buyer_id, idempotency_key);
-CREATE INDEX ASYNC IF NOT EXISTS escrow_entries_order_idx  ON verdict.escrow_entries (order_id);
-CREATE INDEX ASYNC IF NOT EXISTS verifications_subject_idx ON verdict.verifications (subject_id);
-CREATE INDEX ASYNC IF NOT EXISTS tickets_holder_idx        ON verdict.tickets (holder_user_id);
-CREATE INDEX ASYNC IF NOT EXISTS tickets_section_idx       ON verdict.tickets (section_id);
-CREATE INDEX ASYNC IF NOT EXISTS tickets_event_idx         ON verdict.tickets (event_id);
+CREATE UNIQUE INDEX ASYNC IF NOT EXISTS orders_idem_uidx     ON dhamana.orders (buyer_id, idempotency_key);
+CREATE INDEX ASYNC IF NOT EXISTS escrow_entries_order_idx  ON dhamana.escrow_entries (order_id);
+CREATE INDEX ASYNC IF NOT EXISTS verifications_subject_idx ON dhamana.verifications (subject_id);
+CREATE INDEX ASYNC IF NOT EXISTS tickets_holder_idx        ON dhamana.tickets (holder_user_id);
+CREATE INDEX ASYNC IF NOT EXISTS tickets_section_idx       ON dhamana.tickets (section_id);
+CREATE INDEX ASYNC IF NOT EXISTS tickets_event_idx         ON dhamana.tickets (event_id);
 `;

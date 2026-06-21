@@ -20,7 +20,7 @@ export function Nav() {
     <nav className="nav">
       <div className="container nav-inner">
         <Link href="/" className="brand">
-          <span className="glyph">◆</span> Verdict
+          <span className="glyph">◆</span> Dhamana
         </Link>
         <div className="nav-links">
           {LINKS.map((l) => (

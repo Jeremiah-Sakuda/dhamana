@@ -19,7 +19,7 @@ function assert(cond: boolean, msg: string) {
 
 async function main() {
   const name = await getBackendName();
-  console.log(`Verdict smoke — backend=${name} (${REGION_A_LABEL} + ${REGION_B_LABEL})\n`);
+  console.log(`Dhamana smoke — backend=${name} (${REGION_A_LABEL} + ${REGION_B_LABEL})\n`);
   if (name === "memory") console.log("Note: DB_BACKEND=memory — this proves the simulator, not a live cluster.\n");
 
   const { regionA, regionB } = await getRegions();

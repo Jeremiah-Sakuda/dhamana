@@ -66,7 +66,7 @@ export async function createDsqlClient(cfg: DsqlEndpointConfig): Promise<Sql> {
     max: 10,
     idle_timeout: 60,
     max_lifetime: 60 * 50, // recycle before DSQL's hard 60-minute connection cap
-    connection: { search_path: "verdict" },
+    connection: { search_path: "dhamana" },
     // DSQL has no SERIAL; we never expect the driver to need it. Keep prepared
     // statements off — DSQL connections are short-lived and pooled.
     prepare: false,

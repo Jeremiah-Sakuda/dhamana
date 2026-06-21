@@ -9,7 +9,7 @@ import type { FanTier } from "@/db/types";
 
 const REASONS: Record<string, string> = {
   verification_required:
-    "You're over the unverified limit for this event. Verdict rejected it at the database — get verified (Reviewer console) to raise your cap. This is the anti-scalp gate: a bot can't sweep inventory.",
+    "You're over the unverified limit for this event. Dhamana rejected it at the database — get verified (Reviewer console) to raise your cap. This is the anti-scalp gate: a bot can't sweep inventory.",
   order_limit_exceeded: "That exceeds your per-event ticket cap for this tier.",
   insufficient_inventory: "Sold out — another fan took the last seat.",
   section_inactive: "This section isn't on sale.",

@@ -1,7 +1,7 @@
 /**
- * Verdict — domain types + the backend/repository contracts.
+ * Dhamana — domain types + the backend/repository contracts.
  *
- * Verdict is the fair-drop engine: fairness and anti-scalping enforced as
+ * Dhamana is the fair-drop engine: fairness and anti-scalping enforced as
  * database invariants at COMMIT, across strongly-consistent active-active regions.
  * The same load-bearing transactions run unchanged on three backends:
  *

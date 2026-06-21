@@ -17,7 +17,7 @@ app code that bots route around and that diverges across regions. We wanted to
 make fairness something the *database* guarantees, at commit.
 
 ## What it does
-Verdict is a fair-drop ticketing engine. Under a flash-drop stampede it **cannot
+Dhamana is a fair-drop ticketing engine. Under a flash-drop stampede it **cannot
 oversell a seat, cannot resell a ticket twice, and cannot let a fan buy without a
 verified-fan record** — enforced at COMMIT on Aurora DSQL across active-active
 regions, and it holds throughput at scale via a sharded inventory counter.

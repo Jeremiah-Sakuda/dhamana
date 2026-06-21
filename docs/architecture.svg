@@ -12,7 +12,7 @@
   </defs>
 
   <rect width="980" height="620" fill="#f5f1e8"/>
-  <text x="40" y="48" class="ink" font-size="30" font-weight="600">Verdict — architecture</text>
+  <text x="40" y="48" class="ink" font-size="30" font-weight="600">Dhamana — architecture</text>
   <text x="40" y="72" class="ink3 sans" font-size="13">fair allocation of scarce things, enforced as database invariants on Amazon Aurora DSQL</text>
 
   <!-- Clients -->

@@ -1,4 +1,4 @@
-# Building Verdict: fair-drop ticketing as commit-time invariants on Amazon Aurora DSQL + Vercel
+# Building Dhamana: fair-drop ticketing as commit-time invariants on Amazon Aurora DSQL + Vercel
 
 *This post was created for the H0: Hack the Zero Stack hackathon. #H0Hackathon*
 
@@ -6,13 +6,13 @@
 
 Every painful thing about ticketing — overselling a show, bots sweeping a drop,
 the same ticket sold to three people, refund leakage — is enforced today in
-application code that bots route around and that diverges across regions. Verdict
+application code that bots route around and that diverges across regions. Dhamana
 moves all four into the **database**, un-bypassable at commit, on Amazon Aurora
 DSQL. Here's what building it taught me about DSQL.
 
 ## The reframe
 
-> Stripe made payments a primitive. Verdict makes **fair allocation of scarce
+> Stripe made payments a primitive. Dhamana makes **fair allocation of scarce
 > things under a stampede** a primitive.
 
 Four invariants, enforced at `COMMIT` across two strongly-consistent regions:
@@ -58,7 +58,7 @@ limits respected; and IAM auth tokens minted per connection via an async
 
 ## Making the win visible
 
-Strong consistency is invisible when it works — nothing happens. So Verdict ships
+Strong consistency is invisible when it works — nothing happens. So Dhamana ships
 a **naive-vs-guarded toggle** that manufactures the exact oversell DSQL prevents,
 then shows it prevented, reading the final state from *both* regional endpoints.
 The front-end mirrors the back-end: the **seatmap is the contested inventory row**

@@ -20,7 +20,7 @@ export default async function EventsPage() {
           Sell out in 90 seconds — <span className="hl">without selling a seat twice.</span>
         </h1>
         <p style={{ fontSize: "1.12rem" }}>
-          Verdict holds every payment in escrow, gates each purchase on a
+          Dhamana holds every payment in escrow, gates each purchase on a
           verified-fan record, and runs the on-sale across two strongly-consistent
           regions. Under a flash-drop stampede it{" "}
           <strong>cannot oversell a seat, cannot resell a ticket twice, and cannot

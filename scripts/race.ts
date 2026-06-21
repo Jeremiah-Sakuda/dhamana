@@ -29,7 +29,7 @@ function render(title: string, r: Awaited<ReturnType<typeof runRace>>) {
 }
 
 async function main() {
-  line("Verdict — two-region fair-drop race");
+  line("Dhamana — two-region fair-drop race");
   await reset();
   render("NAIVE (count-then-insert, write skew)", await runRace({ mode: "naive", sectionId: HERO_SECTION_ID }));
   await reset();
