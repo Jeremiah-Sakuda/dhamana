@@ -132,7 +132,7 @@ concurrency on all three backends and on the live cluster (see `npm run smoke:ds
 
 ```
 src/db/
-  schema.sql            DSQL DDL (UUIDv7 PKs, sharded buckets, CREATE INDEX ASYNC)
+  schema.ts             DSQL DDL (UUIDv7 PKs, sharded buckets, CREATE INDEX ASYNC)
   transactions.ts       T1 buy · T2 release/refund · T3 verify · T4 resale · naive · reconcile
   retry.ts              retryOnConflict (40001, full-jitter, tuned for contention)
   race.ts               two-region race harness

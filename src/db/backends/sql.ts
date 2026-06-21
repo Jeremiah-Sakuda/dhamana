@@ -1,7 +1,5 @@
 import type { Sql } from "postgres";
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
+import { SCHEMA_SQL } from "../schema";
 import { seedData, makeBuckets } from "../../data/seed";
 import type {
   Backend,
@@ -36,8 +34,6 @@ interface SqlTx extends Tx {
   sql: Sql;
 }
 
-const __dir = dirname(fileURLToPath(import.meta.url));
-const SCHEMA_PATH = join(__dir, "..", "schema.sql");
 const n = (v: unknown): number => (typeof v === "string" ? Number(v) : (v as number));
 const iso = (v: unknown) => new Date(v as string).toISOString();
 
@@ -308,7 +304,7 @@ export class SqlBackend implements Backend {
   }
 
   private async applySchema(): Promise<void> {
-    let ddl = readFileSync(SCHEMA_PATH, "utf8");
+    let ddl = SCHEMA_SQL;
     if (this.name === "postgres") {
       ddl = ddl.replace(/CREATE UNIQUE INDEX ASYNC/g, "CREATE UNIQUE INDEX");
       ddl = ddl.replace(/CREATE INDEX ASYNC/g, "CREATE INDEX");
