@@ -1,6 +1,6 @@
 # Verdict — the fair-drop engine
 
-> **When 100,000 fans race for 10,000 seats, the database itself guarantees you cannot oversell a seat, cannot resell a ticket twice, and cannot buy without being a verified fan — enforced at commit on Amazon Aurora DSQL, across active-active regions, at flash-drop scale.**
+> **When 100,000 fans race for 10,000 seats, the database itself guarantees you cannot oversell a seat, cannot resell a ticket twice, and cannot let an account buy past its verified-fan cap — enforced at commit on Amazon Aurora DSQL, across active-active regions, at flash-drop scale.**
 
 Built for **H0: Hack the Zero Stack** (Vercel + AWS Databases) · Track: **Million-Scale Global App** · Database: **Amazon Aurora DSQL** (multi-region).
 
@@ -45,6 +45,11 @@ buckets |  ok  | blocked | 40001 retries |   ms  | buys/sec | oversold
     16  |  120 |       0 |           354 |   203 |      591 | no ✅
     64  |  120 |       0 |            99 |    96 |     1250 | no ✅      ← sharded scales
 ```
+
+These are **in-process-engine** numbers — the point is the *relative* effect (one
+hot bucket sheds buyers and drowns in `40001` retries; sharding spreads writes,
+zero oversell in every config). Against the live DSQL cluster the absolute
+throughput is network-bound and far lower; the correctness result is identical.
 
 ---
 
@@ -144,7 +149,7 @@ src/lib/                uuidv7 · money · tiers (fan caps/fees) · api helpers
 src/data/seed.ts        events, sections (+ sharded buckets), fans, promoters, a resellable ticket
 src/app/                Next.js App Router — pages + API route handlers
 src/components/          seatmap, countdown, buy panel, escrow motif, throughput chart, …
-tests/                  vitest concurrency suite (18)
+tests/                  vitest concurrency + unit suite (24)
 scripts/                race · load · seed · smoke:dsql · apply-schema
 docs/                   ARCHITECTURE · DEMO · BLOG · SUBMISSION · architecture.svg
 ```

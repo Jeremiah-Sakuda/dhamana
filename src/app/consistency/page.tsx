@@ -8,7 +8,7 @@ interface Report {
   mode: "naive" | "guarded"; backend: string; title: string;
   startRemaining: number; endRemainingRegionA: number; endRemainingRegionB: number;
   consistentAcrossRegions: boolean; ordersCreated: number; ticketsIssued: number; totalHeldCents: number;
-  oversold: boolean; reconciliationOk: boolean;
+  oversold: boolean; reconciliationOk: boolean; degenerate?: boolean;
   systemReconciliation: { seatsAvailable: number; ticketsIssued: number; ok: boolean };
   outcomes: Outcome[]; summary: string;
 }
@@ -64,7 +64,7 @@ export default function ConsistencyPage() {
 
       {report && (
         <div className="stack fade-in" role="status" aria-live="polite" style={{ ["--gap" as string]: "20px" }}>
-          <div className={`verdict ${report.oversold ? "bad" : "good"}`} style={{ fontSize: "1.02rem" }}>{report.oversold ? "❌ " : "✓ "}{report.summary}</div>
+          <div className={`verdict ${report.oversold || report.degenerate ? "bad" : "good"}`} style={{ fontSize: "1.02rem" }}>{report.oversold ? "❌ " : report.degenerate ? "⚠️ " : "✓ "}{report.summary}</div>
 
           <div className="endpoints">
             {report.outcomes.map((o, i) => (

@@ -38,6 +38,8 @@ export interface RaceReport {
   oversold: boolean;
   reconciliations: Reconciliation[];
   reconciliationOk: boolean;
+  /** Guarded run that produced no committed order / no held funds — not a real win. */
+  degenerate: boolean;
   systemReconciliation: { seatsAvailable: number; ticketsIssued: number; ok: boolean };
   outcomes: RaceOutcome[];
   summary: string;
@@ -69,9 +71,17 @@ export async function runRace(opts: { mode: RaceMode; sectionId?: string; qty?: 
   const backend = await getBackendName();
   const { regionA, regionB } = await getRegions();
 
-  const before = await regionA.q.getSection(sectionId);
-  const startRemaining = before?.remaining ?? 0;
-  const title = before ? `${before.event.name} — ${before.name}` : sectionId;
+  let before = await regionA.q.getSection(sectionId);
+  // Self-heal: a stranded/empty catalog (e.g. after an aborted load) must not
+  // null-deref the headline race — reseed once and re-read.
+  if (!before) {
+    await regionA.reset();
+    before = await regionA.q.getSection(sectionId);
+  }
+  if (!before) throw new Error("catalog_unavailable");
+  const seatCount = before.seat_count;
+  const startRemaining = before.remaining;
+  const title = `${before.event.name} — ${before.name}`;
 
   const [a, b] = await Promise.all([
     attempt(regionA, opts.mode, REGION_A_LABEL, "Amara", FAN_AMARA_ID, sectionId, qty),
@@ -84,22 +94,34 @@ export async function runRace(opts: { mode: RaceMode; sectionId?: string; qty?: 
   const endRemainingRegionA = afterA?.remaining ?? 0;
   const endRemainingRegionB = afterB?.remaining ?? 0;
 
-  const createdOrderIds = outcomes.filter((o) => o.ok && o.orderId).map((o) => o.orderId!);
-  const reconciliations = await Promise.all(createdOrderIds.map((id) => reconcile(regionA, id)));
+  // Reconcile each committed order from the region that COMMITTED it (index 0 =
+  // regionA/Amara, 1 = regionB/Kwame) so the held-funds read can't miss a
+  // just-committed write due to cross-endpoint timing.
+  const created = outcomes
+    .map((o, i) => ({ o, be: i === 0 ? regionA : regionB }))
+    .filter((x) => x.o.ok && x.o.orderId);
+  const createdOrderIds = created.map((x) => x.o.orderId!);
+  const reconciliations = await Promise.all(created.map((x) => reconcile(x.be, x.o.orderId!)));
   const totalHeldCents = reconciliations.reduce((s, r) => s + r.heldCents, 0);
   const ticketsIssued = (await regionA.q.listTicketsForSection(sectionId)).filter((t) => t.state !== "void").length;
 
-  const oversold = ticketsIssued > before!.seat_count || endRemainingRegionA < 0;
+  const oversold = ticketsIssued > seatCount || endRemainingRegionA < 0;
   const consistentAcrossRegions = endRemainingRegionA === endRemainingRegionB;
   const reconciliationOk = reconciliations.every((r) => r.ok);
+  // A guarded run only "succeeds" if exactly one order committed with real funds
+  // held — never print a green "failed safe" banner for a vacuous 0-order/0==0 run.
+  const degenerate = opts.mode === "guarded" && !oversold && !(createdOrderIds.length >= 1 && totalHeldCents > 0);
+  const plural = seatCount === 1 ? "" : "s";
 
   const summary =
     opts.mode === "guarded"
       ? oversold
         ? "UNEXPECTED: guarded mode oversold"
-        : `Guarded: ${createdOrderIds.length} order committed for ${before!.seat_count} seat${before!.seat_count === 1 ? "" : "s"}, $${(totalHeldCents / 100).toFixed(2)} held. The loser hit 40001, retried, and failed safe.`
+        : degenerate
+          ? "Guarded: no order committed this run (catalog settling) — reset and fire again."
+          : `Guarded: ${createdOrderIds.length} order committed for ${seatCount} seat${plural}, $${(totalHeldCents / 100).toFixed(2)} held. The loser hit 40001, retried, and failed safe.`
       : oversold
-        ? `Naive: ${ticketsIssued} tickets issued for ${before!.seat_count} seat${before!.seat_count === 1 ? "" : "s"} — write skew. The books no longer reconcile against inventory.`
+        ? `Naive: ${ticketsIssued} tickets issued for ${seatCount} seat${plural} — write skew. The books no longer reconcile against inventory.`
         : backend === "memory"
           ? "Naive: the writes serialized this run — fire again to catch the oversell window."
           : "Naive: the database rejected the conflicting write this run — write skew is intermittent on DSQL; reliably reproduced on the in-process engine.";
@@ -119,7 +141,8 @@ export async function runRace(opts: { mode: RaceMode; sectionId?: string; qty?: 
     oversold,
     reconciliations,
     reconciliationOk,
-    systemReconciliation: { seatsAvailable: before!.seat_count, ticketsIssued, ok: ticketsIssued <= before!.seat_count },
+    degenerate,
+    systemReconciliation: { seatsAvailable: seatCount, ticketsIssued, ok: ticketsIssued <= seatCount },
     outcomes,
     summary,
   };

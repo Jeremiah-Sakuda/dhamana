@@ -322,26 +322,41 @@ export class SqlBackend implements Backend {
   }
 
   private async seedIfEmpty(): Promise<void> {
-    const rows = await this.sql`select count(*)::int as c from verdict.users`;
+    // Gate on a CONTENT table (sections), not users — a partial wipe can leave
+    // users while the catalog is gone, which must still trigger a reseed.
+    const rows = await this.sql`select count(*)::int as c from verdict.sections`;
     if (n(rows[0].c) > 0) return;
+    await this.seedRows();
+  }
+
+  /** Insert seed rows, tolerant of rows that already exist (idempotent against a
+   *  partial wipe), so the catalog can never be left empty. */
+  private async seedRows(): Promise<void> {
     const d = seedData();
-    for (const u of d.users) await this.sql`insert into verdict.users (id, role, display_name, email, home_region, fan_tier, created_at) values (${u.id}, ${u.role}, ${u.display_name}, ${u.email}, ${u.home_region}, ${u.fan_tier}, ${u.created_at})`;
-    for (const p of d.promoters) await this.sql`insert into verdict.promoters (user_id, org_name, country, verified, created_at) values (${p.user_id}, ${p.org_name}, ${p.country}, ${p.verified}, ${p.created_at})`;
-    for (const v of d.verifications) await this.sql`insert into verdict.verifications (id, subject_id, subject_kind, tier, method, evidence_url, status, reviewed_by, created_at, decided_at) values (${v.id}, ${v.subject_id}, ${v.subject_kind}, ${v.tier}, ${v.method}, ${v.evidence_url}, ${v.status}, ${v.reviewed_by}, ${v.created_at}, ${v.decided_at})`;
-    for (const e of d.events) await this.sql`insert into verdict.events (id, promoter_id, name, venue, starts_at, status, created_at) values (${e.id}, ${e.promoter_id}, ${e.name}, ${e.venue}, ${e.starts_at}, ${e.status}, ${e.created_at})`;
-    for (const s of d.sections) await this.sql`insert into verdict.sections (id, event_id, name, price_cents, currency, seat_count, status, created_at) values (${s.id}, ${s.event_id}, ${s.name}, ${s.price_cents}, ${s.currency}, ${s.seat_count}, ${s.status}, ${s.created_at})`;
-    for (const b of d.buckets) await this.sql`insert into verdict.section_stock_buckets (section_id, bucket_no, remaining_count) values (${b.section_id}, ${b.bucket_no}, ${b.remaining_count})`;
-    for (const o of d.orders) await this.sql`insert into verdict.orders (id, buyer_id, event_id, section_id, kind, qty, amount_cents, currency, status, buyer_region, idempotency_key, created_at, updated_at) values (${o.id}, ${o.buyer_id}, ${o.event_id}, ${o.section_id}, ${o.kind}, ${o.qty}, ${o.amount_cents}, ${o.currency}, ${o.status}, ${o.buyer_region}, ${o.idempotency_key}, ${o.created_at}, ${o.updated_at})`;
-    for (const a of d.escrowAccounts) await this.sql`insert into verdict.escrow_accounts (order_id, held_cents, state, updated_at) values (${a.order_id}, ${a.held_cents}, ${a.state}, ${a.updated_at})`;
-    for (const e of d.escrowEntries) await this.sql`insert into verdict.escrow_entries (id, order_id, entry_type, amount_cents, balance_after_cents, created_at) values (${e.id}, ${e.order_id}, ${e.entry_type}, ${e.amount_cents}, ${e.balance_after_cents}, ${e.created_at})`;
-    for (const t of d.tickets) await this.sql`insert into verdict.tickets (id, order_id, section_id, event_id, seat_label, holder_user_id, state, resale_price_cap_cents, created_at) values (${t.id}, ${t.order_id}, ${t.section_id}, ${t.event_id}, ${t.seat_label}, ${t.holder_user_id}, ${t.state}, ${t.resale_price_cap_cents}, ${t.created_at})`;
+    const ins = async (p: Promise<unknown>) => {
+      try { await p; } catch (e) {
+        if (!/duplicate|already exists|unique/i.test((e as Error).message ?? "")) throw e;
+      }
+    };
+    for (const u of d.users) await ins(this.sql`insert into verdict.users (id, role, display_name, email, home_region, fan_tier, created_at) values (${u.id}, ${u.role}, ${u.display_name}, ${u.email}, ${u.home_region}, ${u.fan_tier}, ${u.created_at})`);
+    for (const p of d.promoters) await ins(this.sql`insert into verdict.promoters (user_id, org_name, country, verified, created_at) values (${p.user_id}, ${p.org_name}, ${p.country}, ${p.verified}, ${p.created_at})`);
+    for (const v of d.verifications) await ins(this.sql`insert into verdict.verifications (id, subject_id, subject_kind, tier, method, evidence_url, status, reviewed_by, created_at, decided_at) values (${v.id}, ${v.subject_id}, ${v.subject_kind}, ${v.tier}, ${v.method}, ${v.evidence_url}, ${v.status}, ${v.reviewed_by}, ${v.created_at}, ${v.decided_at})`);
+    for (const e of d.events) await ins(this.sql`insert into verdict.events (id, promoter_id, name, venue, starts_at, status, created_at) values (${e.id}, ${e.promoter_id}, ${e.name}, ${e.venue}, ${e.starts_at}, ${e.status}, ${e.created_at})`);
+    for (const s of d.sections) await ins(this.sql`insert into verdict.sections (id, event_id, name, price_cents, currency, seat_count, status, created_at) values (${s.id}, ${s.event_id}, ${s.name}, ${s.price_cents}, ${s.currency}, ${s.seat_count}, ${s.status}, ${s.created_at})`);
+    for (const b of d.buckets) await ins(this.sql`insert into verdict.section_stock_buckets (section_id, bucket_no, remaining_count) values (${b.section_id}, ${b.bucket_no}, ${b.remaining_count})`);
+    for (const o of d.orders) await ins(this.sql`insert into verdict.orders (id, buyer_id, event_id, section_id, kind, qty, amount_cents, currency, status, buyer_region, idempotency_key, created_at, updated_at) values (${o.id}, ${o.buyer_id}, ${o.event_id}, ${o.section_id}, ${o.kind}, ${o.qty}, ${o.amount_cents}, ${o.currency}, ${o.status}, ${o.buyer_region}, ${o.idempotency_key}, ${o.created_at}, ${o.updated_at})`);
+    for (const a of d.escrowAccounts) await ins(this.sql`insert into verdict.escrow_accounts (order_id, held_cents, state, updated_at) values (${a.order_id}, ${a.held_cents}, ${a.state}, ${a.updated_at})`);
+    for (const e of d.escrowEntries) await ins(this.sql`insert into verdict.escrow_entries (id, order_id, entry_type, amount_cents, balance_after_cents, created_at) values (${e.id}, ${e.order_id}, ${e.entry_type}, ${e.amount_cents}, ${e.balance_after_cents}, ${e.created_at})`);
+    for (const t of d.tickets) await ins(this.sql`insert into verdict.tickets (id, order_id, section_id, event_id, seat_label, holder_user_id, state, resale_price_cap_cents, created_at) values (${t.id}, ${t.order_id}, ${t.section_id}, ${t.event_id}, ${t.seat_label}, ${t.holder_user_id}, ${t.state}, ${t.resale_price_cap_cents}, ${t.created_at})`);
   }
 
   async reset(): Promise<void> {
+    // Best-effort wipe (small demo data, well under the 3000-row/txn limit), then
+    // ALWAYS reseed — so a partial/aborted reset can never strand an empty catalog.
     for (const t of ["tickets", "escrow_entries", "escrow_accounts", "orders", "section_stock_buckets", "sections", "events", "verifications", "promoters", "users"]) {
-      await this.sql.unsafe(`delete from verdict.${t}`);
+      try { await this.sql.unsafe(`delete from verdict.${t}`); } catch { /* tolerate */ }
     }
-    await this.seedIfEmpty();
+    await this.seedRows();
   }
 
   async reshardSection(sectionId: string, buckets: number): Promise<void> {
