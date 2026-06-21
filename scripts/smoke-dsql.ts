@@ -9,7 +9,7 @@
 import { getRegions, getBackendName, REGION_A_LABEL, REGION_B_LABEL } from "../src/db/index";
 import { runRace } from "../src/db/race";
 import { buyTickets } from "../src/db/transactions";
-import { HERO_SECTION_ID, FLASH_SECTION_ID } from "../src/data/seed";
+import { HERO_SECTION_ID, FLASH_SECTION_ID, BOT_ID } from "../src/data/seed";
 import { uuidv7 } from "../src/lib/uuidv7";
 
 function assert(cond: boolean, msg: string) {
@@ -51,6 +51,22 @@ async function main() {
     const issued = (await regionA.q.listTicketsForSection(FLASH_SECTION_ID)).filter((t) => t.state !== "void").length;
     assert(issued <= 1000, `${buckets} bucket(s): no oversell (${ok} ok, ${conflicts} retries)`);
   }
+
+  console.log("\nPer-buyer cap under a same-buyer sweep (the anti-bot invariant):");
+  await regionA.reset();
+  await regionA.reshardSection(FLASH_SECTION_ID, 32); // many buckets: the two buys
+  // take DIFFERENT bucket rows, so the ONLY thing that can stop the bot is the
+  // contended hold counter — not bucket contention. A count(*) cap would let both
+  // through (write skew); the contended UPDATE makes one lose at commit (40001).
+  const sweep = await Promise.allSettled([
+    buyTickets(regionA, { buyerId: BOT_ID, sectionId: FLASH_SECTION_ID, qty: 2, buyerRegion: "smoke" }),
+    buyTickets(regionA, { buyerId: BOT_ID, sectionId: FLASH_SECTION_ID, qty: 2, buyerRegion: "smoke" }),
+  ]);
+  const swept = sweep.filter((r) => r.status === "fulfilled").length;
+  const botHeld = (await regionA.q.listTicketsForSection(FLASH_SECTION_ID))
+    .filter((t) => t.holder_user_id === BOT_ID && t.state !== "void").length;
+  assert(swept === 1, `concurrent same-buyer sweep: exactly one buy-of-2 commits (got ${swept})`);
+  assert(botHeld <= 2, `bot never exceeds its cap of 2 (held ${botHeld}) — contended counter, not write skew`);
 
   console.log("\n✅ SMOKE PASSED — the real backend enforces the invariants.");
   await regionA.close();

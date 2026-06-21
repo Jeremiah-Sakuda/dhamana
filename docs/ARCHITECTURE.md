@@ -134,3 +134,9 @@ connection; `ssl: require`; `max_lifetime ≈ 50 min`; `search_path = dhamana`.
 - **Reconciliation invariant:** `held_cents + Σrelease + Σrefund = Σhold` per
   order, asserted in the order timeline UI, the race report, and the tests; it
   holds identically read from either endpoint.
+- **Refund does not return inventory (documented choice).** A refund settles the
+  money and voids the buyer's tickets, but it deliberately does **not** decrement
+  the seat back into `section_stock_buckets` or release the buyer's
+  `buyer_event_holds` count. A drop is a one-shot allocation; re-opening a freed
+  seat mid-stampede is a separate fairness decision (who gets the returned seat?),
+  not an automatic rollback. Re-inventory on refund is a named next step.
