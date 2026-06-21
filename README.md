@@ -31,7 +31,7 @@ commit-time OCC conflict (40001)** — the whole app, the two-region race, and t
 load benchmark run with zero external dependencies.
 
 ```bash
-npm test             # 24 tests — concurrency (oversell, gate, resale, reconciliation, idempotency, conservation) + units
+npm test             # 25 tests — concurrency (oversell, gate, resale, reconciliation, idempotency, conservation) + units
 npm run race         # two-region race: naive write-skew oversell vs guarded fail-safe
 npm run load         # flash-drop benchmark: 1 hot bucket vs 16 vs 64
 ```
@@ -95,7 +95,8 @@ DB_BACKEND=dsql \
   npm run db:schema && npm run seed && npm run smoke:dsql
 ```
 
-`smoke:dsql` proves the guarded hero claim + the sharded burst on the real cluster.
+`smoke:dsql` replays the guarded hero claim + the sharded burst against a live
+DSQL cluster (run it to capture the artifact; the numbers above are in-process).
 
 ---
 

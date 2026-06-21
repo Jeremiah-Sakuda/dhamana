@@ -102,7 +102,8 @@ avoid hot-key contention. No assumption of `gen_random_uuid()`.
 ## Multi-region: be precise
 
 - Two regional endpoints, both **read-write with strong consistency** via
-  synchronous cross-region replication (active-active, zero lag on commit).
+  synchronous cross-region replication on commit (active-active) — DSQL's design
+  guarantee; commit latency reflects the cross-region quorum round-trip.
 - A **witness region** is **log-only** (no endpoint); it joins the commit quorum
   so a single-region failure still commits with no data loss.
 - **Same-continent only today.** The target cluster for this build is **`us-east-1`

@@ -41,9 +41,10 @@ regions, and it holds throughput at scale via a sharded inventory counter.
 Making the consistency win visible (the naive-vs-guarded toggle), and discovering
 that snapshot isolation permits write skew — so a naive count-then-insert oversells
 until you contend on the shared row (reliably reproduced on the in-process engine;
-intermittent on the live cluster, which is exactly why the fix is to contend on the
-row rather than rely on the read). The same lesson drove the per-buyer cap onto a
-contended counter row, not a `count(*)`. That correction made the project sharper.
+under DSQL's snapshot isolation the same window is narrower and timing-dependent,
+which is exactly why the fix is to contend on the row rather than rely on the read).
+The same lesson drove the per-buyer cap onto a contended counter row, not a
+`count(*)`. That correction made the project sharper.
 
 ## Accomplishments
 Oversell, double-sale, and bot-sweep made architecturally impossible; a DB-enforced
