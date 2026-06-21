@@ -153,7 +153,7 @@ src/lib/                uuidv7 · money · tiers (fan caps/fees) · api helpers
 src/data/seed.ts        events, sections (+ sharded buckets), fans, promoters, a resellable ticket
 src/app/                Next.js App Router — pages + API route handlers
 src/components/          seatmap, countdown, buy panel, escrow motif, throughput chart, …
-tests/                  vitest concurrency + unit suite (24)
+tests/                  vitest concurrency + unit suite (25)
 scripts/                race · load · seed · smoke:dsql · apply-schema
 docs/                   ARCHITECTURE · DEMO · BLOG · SUBMISSION · architecture.svg
 ```
