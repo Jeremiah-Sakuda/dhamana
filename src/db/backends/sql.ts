@@ -193,9 +193,14 @@ export class SqlBackend implements Backend {
         const rows = await sql`select * from verdict.tickets where id = ${ticketId}`;
         return rows.length ? toTicket(rows[0]) : null;
       },
-      transferTicket: async (tx, ticketId, newHolderId, state) => {
+      transferTicket: async (tx, ticketId, expectedHolderId, newHolderId, state): Promise<boolean> => {
         const sql = (tx as SqlTx).sql;
-        await sql`update verdict.tickets set holder_user_id = ${newHolderId}, state = ${state} where id = ${ticketId}`;
+        // Self-defending: only moves the ticket if it still has the expected
+        // holder + 'valid' state, so the write itself can't double-sell.
+        const res = await sql`
+          update verdict.tickets set holder_user_id = ${newHolderId}, state = ${state}
+          where id = ${ticketId} and holder_user_id = ${expectedHolderId} and state = 'valid'`;
+        return (res.count ?? 0) > 0;
       },
       insertVerification: async (tx, v: Verification) => {
         const sql = (tx as SqlTx).sql;

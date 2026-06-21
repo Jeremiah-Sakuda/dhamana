@@ -317,8 +317,10 @@ export async function resaleTicket(
           // Anti-scalp: price ceiling enforced at COMMIT, not in the UI.
           if (input.priceCents > ticket.resale_price_cap_cents) throw new BlockedError("resale_over_cap");
 
-          // Atomic capability move — the ticket can never be valid for two holders.
-          await backend.repo.transferTicket(tx, input.ticketId, input.buyerId, "valid");
+          // Atomic, self-defending capability move — the ticket can never be
+          // valid for two holders (also guards if it moved since we read it).
+          const moved = await backend.repo.transferTicket(tx, input.ticketId, input.sellerId, input.buyerId, "valid");
+          if (!moved) throw new BlockedError("not_ticket_holder");
 
           // Escrow the resale amount (buyer → escrow; released to seller later).
           const orderId = uuidv7();

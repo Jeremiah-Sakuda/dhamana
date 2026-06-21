@@ -296,7 +296,14 @@ export class MemoryBackend implements Backend {
         this.trackRead(t, "tickets", ticketId);
         return row ? { ...row } : null;
       },
-      transferTicket: async (tx, ticketId, newHolderId, state) => { await tick(); this.write(tx as MemTx, { kind: "patch", table: "tickets", pk: ticketId, patch: { holder_user_id: newHolderId, state } }); },
+      transferTicket: async (tx, ticketId, expectedHolderId, newHolderId, state): Promise<boolean> => {
+        await tick();
+        const t = tx as MemTx;
+        const row = this.readRow(t, "tickets", ticketId) as Ticket | null;
+        if (!row || row.holder_user_id !== expectedHolderId || row.state !== "valid") return false;
+        this.write(t, { kind: "patch", table: "tickets", pk: ticketId, patch: { holder_user_id: newHolderId, state } });
+        return true;
+      },
 
       insertVerification: async (tx, v: Verification) => { await tick(); this.write(tx as MemTx, { kind: "insert", table: "verifications", pk: v.id, row: { ...v } }); },
       updateFanTier: async (tx, userId, tier) => {

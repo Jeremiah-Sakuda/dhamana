@@ -199,7 +199,12 @@ export interface Repo {
 
   /** The capability move (resale): a ticket can never be valid for two holders. */
   readTicketForUpdate(tx: Tx, ticketId: string): Promise<Ticket | null>;
-  transferTicket(tx: Tx, ticketId: string, newHolderId: string, state: TicketState): Promise<void>;
+  /**
+   * Move a ticket's capability. The UPDATE is self-defending — it only applies
+   * when the row still has the expected holder + 'valid' state, so even apart
+   * from OCC the write can't double-sell. Returns false if it matched no row.
+   */
+  transferTicket(tx: Tx, ticketId: string, expectedHolderId: string, newHolderId: string, state: TicketState): Promise<boolean>;
 
   insertVerification(tx: Tx, v: Verification): Promise<void>;
   updateFanTier(tx: Tx, userId: string, tier: FanTier): Promise<void>;

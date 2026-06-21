@@ -218,6 +218,29 @@ describe("idempotency is race-safe (review hardening)", () => {
   });
 });
 
+describe("invariant backstop — conservation + no oversell + reconciliation", () => {
+  it("seats are conserved and the ledger balances across a mixed workload", async () => {
+    await db.reshardSection(FLASH_SECTION_ID, 32);
+    const ids: string[] = [];
+    for (let i = 0; i < 40; i++) {
+      const r = await buyTickets(db, { buyerId: uuidv7(), sectionId: FLASH_SECTION_ID, qty: 1, buyerRegion: "x" });
+      ids.push(r.orderId);
+    }
+    await releaseEscrow(db, ids[0]);
+    await refundEscrow(db, ids[1]); // voids its ticket (refund does not return the seat — documented)
+
+    const section = (await db.q.getSection(FLASH_SECTION_ID))!;
+    const allTickets = await db.q.listTicketsForSection(FLASH_SECTION_ID);
+    const nonVoid = allTickets.filter((t) => t.state !== "void").length;
+
+    expect(nonVoid).toBeLessThanOrEqual(section.seat_count); // no oversell
+    expect(section.remaining).toBeGreaterThanOrEqual(0); // never negative
+    // Seat conservation: remaining + every seat ever taken (incl. voided) = total.
+    expect(section.remaining + allTickets.length).toBe(section.seat_count);
+    for (const id of ids) expect((await reconcile(db, id)).ok).toBe(true); // ledger balances
+  });
+});
+
 describe("reconciliation invariant across mixed operations", () => {
   it("held + Σrelease + Σrefund = Σhold for every order", async () => {
     const ids: string[] = [];
