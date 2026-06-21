@@ -41,6 +41,7 @@ type TableName =
   | "events"
   | "sections"
   | "section_stock_buckets"
+  | "buyer_event_holds"
   | "orders"
   | "escrow_accounts"
   | "escrow_entries"
@@ -60,6 +61,7 @@ const tick = () => new Promise<void>((r) => setTimeout(r, 0));
 const clone = <T = unknown>(v: unknown): T => structuredClone(v) as T;
 const now = () => new Date().toISOString();
 const bkey = (sectionId: string, bucketNo: number) => `${sectionId}:${bucketNo}`;
+const hkey = (buyerId: string, eventId: string) => `${buyerId}:${eventId}`;
 
 export class MemoryBackend implements Backend {
   readonly name = "memory" as const;
@@ -73,6 +75,7 @@ export class MemoryBackend implements Backend {
     events: new Map(),
     sections: new Map(),
     section_stock_buckets: new Map(),
+    buyer_event_holds: new Map(),
     orders: new Map(),
     escrow_accounts: new Map(),
     escrow_entries: new Map(),
@@ -255,16 +258,23 @@ export class MemoryBackend implements Backend {
         return n;
       },
 
-      countBuyerTicketsForEvent: async (tx, buyerId, eventId): Promise<number> => {
+      reserveBuyerHold: async (tx, buyerId, eventId, qty, cap): Promise<number | null> => {
         await tick();
         const t = tx as MemTx;
-        const active = (s: string) => s === "held" || s === "valid";
-        let n = 0;
-        for (const row of this.tables.tickets.values())
-          if ((row.holder_user_id as string) === buyerId && (row.event_id as string) === eventId && active(row.state as string)) n++;
-        for (const op of t.writes)
-          if (op.kind === "insert" && op.table === "tickets" && (op.row.holder_user_id as string) === buyerId && (op.row.event_id as string) === eventId && active(op.row.state as string)) n++;
-        return n;
+        const pk = hkey(buyerId, eventId);
+        // Track the counter row as a read so a concurrent same-buyer reserve
+        // conflicts at commit even on the first-time (insert) path — the loser
+        // retries and re-evaluates the cap against the winner's increment.
+        this.trackRead(t, "buyer_event_holds", pk);
+        const row = this.readRow(t, "buyer_event_holds", pk);
+        const held = row ? (row.held_qty as number) : 0;
+        if (held + qty > cap) return null; // business rejection (cap), not a conflict
+        if (row) {
+          this.write(t, { kind: "adjust", table: "buyer_event_holds", pk, deltas: { held_qty: qty } });
+        } else {
+          this.write(t, { kind: "insert", table: "buyer_event_holds", pk, row: { buyer_id: buyerId, event_id: eventId, held_qty: qty } });
+        }
+        return held + qty;
       },
 
       insertOrder: async (tx, o: Order) => { await tick(); this.write(tx as MemTx, { kind: "insert", table: "orders", pk: o.id, row: { ...o } }); },
@@ -415,6 +425,7 @@ export class MemoryBackend implements Backend {
     for (const e of d.events) this.tables.events.set(e.id, { ...e });
     for (const s of d.sections) this.tables.sections.set(s.id, { ...s });
     for (const b of d.buckets) this.tables.section_stock_buckets.set(bkey(b.section_id, b.bucket_no), { ...b });
+    for (const h of d.holds) this.tables.buyer_event_holds.set(hkey(h.buyer_id, h.event_id), { ...h });
     for (const o of d.orders) this.tables.orders.set(o.id, { ...o });
     for (const a of d.escrowAccounts) this.tables.escrow_accounts.set(a.order_id, { ...a });
     for (const e of d.escrowEntries) this.tables.escrow_entries.set(e.id, { ...e });

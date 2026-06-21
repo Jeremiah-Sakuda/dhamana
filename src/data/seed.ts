@@ -10,6 +10,7 @@ import type {
   EscrowAccount,
   EscrowEntry,
   Ticket,
+  BuyerEventHold,
 } from "../db/types";
 
 /**
@@ -61,6 +62,7 @@ export interface SeedData {
   escrowAccounts: EscrowAccount[];
   escrowEntries: EscrowEntry[];
   tickets: Ticket[];
+  holds: BuyerEventHold[];
 }
 
 /** Split `total` seats across `n` buckets as evenly as possible. */
@@ -137,5 +139,17 @@ export function seedData(): SeedData {
     { id: SEED_TICKET_ID, order_id: SEED_ORDER_ID, section_id: LOWER_SECTION_ID, event_id: EVENT_HERO_ID, seat_label: "Lower Bowl · A-12", holder_user_id: FAN_KWAME_ID, state: "valid", resale_price_cap_cents: resaleCapCents(24000), created_at: T },
   ];
 
-  return { users, promoters, verifications, events, sections, buckets, orders, escrowAccounts, escrowEntries, tickets };
+  // Per-(buyer, event) hold counter, derived from active seed tickets so the
+  // contended cap starts consistent with what the buyer already holds.
+  const holdMap = new Map<string, BuyerEventHold>();
+  for (const t of tickets) {
+    if (t.state !== "valid" && t.state !== "held") continue;
+    const k = `${t.holder_user_id}:${t.event_id}`;
+    const h = holdMap.get(k) ?? { buyer_id: t.holder_user_id, event_id: t.event_id, held_qty: 0 };
+    h.held_qty += 1;
+    holdMap.set(k, h);
+  }
+  const holds = [...holdMap.values()];
+
+  return { users, promoters, verifications, events, sections, buckets, orders, escrowAccounts, escrowEntries, tickets, holds };
 }

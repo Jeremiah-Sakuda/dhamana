@@ -17,7 +17,7 @@ import type { Backend, BackendName } from "./types";
  */
 
 export const REGION_A_LABEL = process.env.DSQL_REGION_A ?? "us-east-1";
-export const REGION_B_LABEL = process.env.DSQL_REGION_B ?? "us-east-2";
+export const REGION_B_LABEL = process.env.DSQL_REGION_B ?? "us-west-2";
 
 interface Endpoints {
   backend: Backend; // default (Region A)

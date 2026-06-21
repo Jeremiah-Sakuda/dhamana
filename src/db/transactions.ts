@@ -80,11 +80,17 @@ export async function buyTickets(
           const tier: FanTier = (await backend.repo.readFanTier(tx, buyerId)) ?? "unverified";
 
           // ── Verified-fan gate in the data path ────────────────────────────
+          // Reserve against the buyer's per-event hold counter with a CONTENDED
+          // conditional UPDATE. Unlike a count(*) cap (write-skew-prone: two
+          // concurrent buys touch different rows and never conflict), this row is
+          // the conflict surface, so a same-buyer sweep across distinct buckets
+          // is arbitrated at commit — the bot cannot exceed its cap.
           const cap = TIERS[tier].maxPerEvent;
-          const held = await backend.repo.countBuyerTicketsForEvent(tx, buyerId, section.event_id);
-          if (held + qty > cap) {
+          const newHeld = await backend.repo.reserveBuyerHold(tx, buyerId, section.event_id, qty, cap);
+          if (newHeld === null) {
             throw new BlockedError(tier === "unverified" ? "verification_required" : "order_limit_exceeded");
           }
+          const held = newHeld - qty; // prior holds, for seat-label numbering below
 
           // ── No oversell ───────────────────────────────────────────────────
           const remaining = await backend.repo.sumSectionRemaining(tx, sectionId);

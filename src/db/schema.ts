@@ -94,6 +94,19 @@ CREATE TABLE IF NOT EXISTS dhamana.section_stock_buckets (
   PRIMARY KEY (section_id, bucket_no)
 );
 
+-- Per-(buyer, event) ticket-hold counter. The per-fan cap is enforced by a
+-- CONTENDED conditional UPDATE on this row (not a count(*) predicate read): two
+-- concurrent buys by the same buyer touch this single row, so DSQL arbitrates
+-- them at commit (40001) — the same write-contention discipline as the stock
+-- buckets. A count(*) cap is write-skew-prone (the buys touch different rows and
+-- never conflict); this row is the conflict surface that makes the cap hold.
+CREATE TABLE IF NOT EXISTS dhamana.buyer_event_holds (
+  buyer_id   uuid NOT NULL,
+  event_id   uuid NOT NULL,
+  held_qty   int  NOT NULL,
+  PRIMARY KEY (buyer_id, event_id)
+);
+
 CREATE TABLE IF NOT EXISTS dhamana.orders (
   id              uuid        NOT NULL,
   buyer_id        uuid        NOT NULL,

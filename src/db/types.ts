@@ -96,6 +96,12 @@ export interface StockBucket {
   remaining_count: number;
 }
 
+export interface BuyerEventHold {
+  buyer_id: string;
+  event_id: string;
+  held_qty: number;
+}
+
 export interface Order {
   id: string;
   buyer_id: string;
@@ -182,8 +188,17 @@ export interface Repo {
    */
   countOrdersForSection(tx: Tx, sectionId: string): Promise<number>;
 
-  /** Per-fan cap: how many tickets this buyer already holds for an event. */
-  countBuyerTicketsForEvent(tx: Tx, buyerId: string, eventId: string): Promise<number>;
+  /**
+   * Per-fan cap, enforced as a CONTENDED write (not a count(*) predicate read).
+   * Atomically reserves `qty` against this buyer's hold counter for the event,
+   * but ONLY if it keeps them at or under `cap`. The increment is a conditional
+   * UPDATE on a single shared row, so two concurrent buys by the same buyer
+   * conflict at commit (40001) and the loser re-evaluates the cap on retry —
+   * closing the write-skew hole a count(*) cap leaves open.
+   * Returns the buyer's new held total on success, or null if the cap would be
+   * exceeded (a business rejection, not a conflict).
+   */
+  reserveBuyerHold(tx: Tx, buyerId: string, eventId: string, qty: number, cap: number): Promise<number | null>;
 
   insertOrder(tx: Tx, order: Order): Promise<void>;
   insertEscrowAccount(tx: Tx, account: EscrowAccount): Promise<void>;

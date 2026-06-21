@@ -144,10 +144,24 @@ export class SqlBackend implements Backend {
         const rows = await sql`select count(*)::int as c from dhamana.orders where section_id = ${sectionId}`;
         return n(rows[0].c);
       },
-      countBuyerTicketsForEvent: async (tx, buyerId, eventId): Promise<number> => {
+      reserveBuyerHold: async (tx, buyerId, eventId, qty, cap): Promise<number | null> => {
         const sql = (tx as SqlTx).sql;
-        const rows = await sql`select count(*)::int as c from dhamana.tickets where holder_user_id = ${buyerId} and event_id = ${eventId} and state in ('held','valid')`;
-        return n(rows[0].c);
+        // Ensure the contended counter row exists (idempotent, non-throwing — so
+        // a first-time concurrent buy doesn't surface a 23505 the retry helper
+        // wouldn't catch). The conflict surface is the UPDATE below.
+        await sql`
+          insert into dhamana.buyer_event_holds (buyer_id, event_id, held_qty)
+          values (${buyerId}, ${eventId}, 0)
+          on conflict (buyer_id, event_id) do nothing`;
+        // The contended write: increment ONLY if it keeps the buyer at/under cap.
+        // Two concurrent same-buyer buys hit this one row → DSQL arbitrates at
+        // commit (40001); the loser retries and re-checks against the new total.
+        const rows = await sql`
+          update dhamana.buyer_event_holds
+          set held_qty = held_qty + ${qty}
+          where buyer_id = ${buyerId} and event_id = ${eventId} and held_qty + ${qty} <= ${cap}
+          returning held_qty`;
+        return rows.length ? n(rows[0].held_qty) : null;
       },
       insertOrder: async (tx, o: Order) => {
         const sql = (tx as SqlTx).sql;
@@ -344,6 +358,7 @@ export class SqlBackend implements Backend {
     for (const e of d.events) await ins(this.sql`insert into dhamana.events (id, promoter_id, name, venue, starts_at, status, created_at) values (${e.id}, ${e.promoter_id}, ${e.name}, ${e.venue}, ${e.starts_at}, ${e.status}, ${e.created_at})`);
     for (const s of d.sections) await ins(this.sql`insert into dhamana.sections (id, event_id, name, price_cents, currency, seat_count, status, created_at) values (${s.id}, ${s.event_id}, ${s.name}, ${s.price_cents}, ${s.currency}, ${s.seat_count}, ${s.status}, ${s.created_at})`);
     for (const b of d.buckets) await ins(this.sql`insert into dhamana.section_stock_buckets (section_id, bucket_no, remaining_count) values (${b.section_id}, ${b.bucket_no}, ${b.remaining_count})`);
+    for (const h of d.holds) await ins(this.sql`insert into dhamana.buyer_event_holds (buyer_id, event_id, held_qty) values (${h.buyer_id}, ${h.event_id}, ${h.held_qty})`);
     for (const o of d.orders) await ins(this.sql`insert into dhamana.orders (id, buyer_id, event_id, section_id, kind, qty, amount_cents, currency, status, buyer_region, idempotency_key, created_at, updated_at) values (${o.id}, ${o.buyer_id}, ${o.event_id}, ${o.section_id}, ${o.kind}, ${o.qty}, ${o.amount_cents}, ${o.currency}, ${o.status}, ${o.buyer_region}, ${o.idempotency_key}, ${o.created_at}, ${o.updated_at})`);
     for (const a of d.escrowAccounts) await ins(this.sql`insert into dhamana.escrow_accounts (order_id, held_cents, state, updated_at) values (${a.order_id}, ${a.held_cents}, ${a.state}, ${a.updated_at})`);
     for (const e of d.escrowEntries) await ins(this.sql`insert into dhamana.escrow_entries (id, order_id, entry_type, amount_cents, balance_after_cents, created_at) values (${e.id}, ${e.order_id}, ${e.entry_type}, ${e.amount_cents}, ${e.balance_after_cents}, ${e.created_at})`);
@@ -353,7 +368,7 @@ export class SqlBackend implements Backend {
   async reset(): Promise<void> {
     // Best-effort wipe (small demo data, well under the 3000-row/txn limit), then
     // ALWAYS reseed — so a partial/aborted reset can never strand an empty catalog.
-    for (const t of ["tickets", "escrow_entries", "escrow_accounts", "orders", "section_stock_buckets", "sections", "events", "verifications", "promoters", "users"]) {
+    for (const t of ["tickets", "escrow_entries", "escrow_accounts", "orders", "buyer_event_holds", "section_stock_buckets", "sections", "events", "verifications", "promoters", "users"]) {
       try { await this.sql.unsafe(`delete from dhamana.${t}`); } catch { /* tolerate */ }
     }
     await this.seedRows();

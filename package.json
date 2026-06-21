@@ -2,7 +2,7 @@
   "name": "dhamana",
   "version": "0.1.0",
   "private": true,
-  "description": "Verdict — the fair-drop engine: fair ticketing where you cannot oversell a seat, resell a ticket twice, or buy unverified — enforced at commit on Amazon Aurora DSQL, at flash-drop scale.",
+  "description": "Dhamana — the fair-drop engine: fair ticketing where you cannot oversell a seat, resell a ticket twice, or buy unverified — enforced at commit on Amazon Aurora DSQL, at flash-drop scale.",
   "type": "module",
   "scripts": {
     "dev": "next dev -p 3939",

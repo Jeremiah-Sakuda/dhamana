@@ -102,6 +102,23 @@ describe("verified-fan gate — the anti-scalping primitive", () => {
   it("a verified fan over their (higher) cap is order_limit_exceeded, not verification_required", async () => {
     await expect(buy(FAN_KWAME_ID, FLASH_SECTION_ID, 7)).rejects.toMatchObject({ reason: "order_limit_exceeded" });
   });
+
+  it("CONCURRENT same-buyer sweep across buckets cannot exceed the cap (no write skew)", async () => {
+    // The bot fires two concurrent buys of 2 (cap 2) at a richly sharded section.
+    // A count(*) cap would let both pass (they take DIFFERENT buckets and never
+    // conflict) — the contended hold counter makes them conflict at commit, so at
+    // most the cap is ever issued.
+    await db.reshardSection(FLASH_SECTION_ID, 32);
+    const results = await Promise.allSettled([
+      buy(BOT_ID, FLASH_SECTION_ID, 2),
+      buy(BOT_ID, FLASH_SECTION_ID, 2),
+    ]);
+    const ok = results.filter((r) => r.status === "fulfilled").length;
+    expect(ok).toBe(1); // exactly one buy of 2 succeeds; the other fails the cap
+    const held = (await db.q.listTicketsForSection(FLASH_SECTION_ID))
+      .filter((t) => t.holder_user_id === BOT_ID && t.state !== "void").length;
+    expect(held).toBeLessThanOrEqual(2); // never the 4 a write-skew cap would allow
+  });
 });
 
 describe("idempotency — duplicate submit doesn't double-charge", () => {
