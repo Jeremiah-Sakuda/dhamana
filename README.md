@@ -130,8 +130,11 @@ and doesn't mean:
   behind a flag, and DSQL's 3,000-row/txn limit handled with batched deletes for
   large resets. These are named next steps, not silent gaps.
 
-The data-layer invariants — the thing this project is actually about — hold under
-concurrency on all three backends and on the live cluster (see `npm run smoke:dsql`).
+The data-layer invariants — the thing this project is actually about — are
+exercised under concurrency by the test suite on the in-process OCC engine (which
+reproduces DSQL's commit-time semantics). The identical transaction code runs on
+the Postgres and DSQL backends; `npm run smoke:dsql` replays the guarded race and
+the cap against a live cluster.
 
 ## Repository layout
 

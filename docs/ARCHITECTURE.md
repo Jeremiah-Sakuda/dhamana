@@ -105,8 +105,8 @@ avoid hot-key contention. No assumption of `gen_random_uuid()`.
   synchronous cross-region replication (active-active, zero lag on commit).
 - A **witness region** is **log-only** (no endpoint); it joins the commit quorum
   so a single-region failure still commits with no data loss.
-- **Same-continent only today.** The validated cluster here is **`us-east-1` +
-  `us-west-2`** (both US) with a US witness. Cross-continent peering is not
+- **Same-continent only today.** The target cluster for this build is **`us-east-1`
+  + `us-west-2`** (both US) with a US witness. Cross-continent peering is not
   supported as of mid-2026; the design generalizes as DSQL's region matrix grows.
 
 > Why active-active isn't over-engineering for ticketing: a global on-sale draws

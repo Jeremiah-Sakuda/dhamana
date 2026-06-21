@@ -114,24 +114,42 @@ export class SqlBackend implements Backend {
         const sql = (tx as SqlTx).sql;
         // Draw `qty` seats GREEDILY across buckets so seats are never stranded
         // below qty-per-bucket. Each per-bucket UPDATE is its own conflict point
-        // DSQL arbitrates at commit; `random()` spreads selection so distinct
-        // buckets don't conflict. Fail only if the TOTAL is < qty.
-        const totalRow = await sql`select coalesce(sum(remaining_count),0)::int as r from dhamana.section_stock_buckets where section_id = ${sectionId}`;
-        if (n(totalRow[0].r) < qty) return false;
+        // DSQL arbitrates at commit; spreading selection so distinct buckets
+        // don't conflict. Fail only if the TOTAL is < qty.
+        //
+        // Read the live buckets ONCE and pick client-side — a per-seat
+        // `ORDER BY random() LIMIT 1` re-select would cost a network round-trip
+        // per iteration (up to 512 sequential hops on the DSQL wire under a
+        // stampede). The conditional UPDATE still guards correctness if the
+        // snapshot is stale; a bounded re-select loop mops up only the residual
+        // lost to a concurrent buyer between snapshot and write.
+        const rows = await sql`select bucket_no, remaining_count from dhamana.section_stock_buckets where section_id = ${sectionId} and remaining_count > 0`;
+        if (rows.reduce((s, r) => s + n(r.remaining_count), 0) < qty) return false;
+        const snapshot = rows
+          .map((r) => ({ bn: n(r.bucket_no), rem: n(r.remaining_count) }))
+          .sort(() => Math.random() - 0.5);
         let need = qty;
+        const drawFrom = async (bn: number, rem: number) => {
+          const take = Math.min(rem, need);
+          if (take <= 0) return;
+          const res = await sql`
+            update dhamana.section_stock_buckets
+            set remaining_count = remaining_count - ${take}
+            where section_id = ${sectionId} and bucket_no = ${bn} and remaining_count >= ${take}`;
+          if ((res.count ?? 0) > 0) need -= take;
+        };
+        for (const b of snapshot) {
+          if (need <= 0) break;
+          await drawFrom(b.bn, b.rem);
+        }
+        // Fallback: seats lost to a concurrent buyer between snapshot and write.
         for (let guard = 0; need > 0 && guard < 512; guard++) {
           const pick = await sql`
             select bucket_no, remaining_count from dhamana.section_stock_buckets
             where section_id = ${sectionId} and remaining_count > 0
             order by random() limit 1`;
           if (!pick.length) break;
-          const bn = n(pick[0].bucket_no);
-          const take = Math.min(n(pick[0].remaining_count), need);
-          const res = await sql`
-            update dhamana.section_stock_buckets
-            set remaining_count = remaining_count - ${take}
-            where section_id = ${sectionId} and bucket_no = ${bn} and remaining_count >= ${take}`;
-          if ((res.count ?? 0) > 0) need -= take;
+          await drawFrom(n(pick[0].bucket_no), n(pick[0].remaining_count));
         }
         return need <= 0;
       },
