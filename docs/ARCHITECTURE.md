@@ -3,7 +3,7 @@
 Next.js (App Router) on Vercel → serverless route handlers → **Amazon Aurora
 DSQL** multi-region cluster, exposing **two strongly-consistent regional
 endpoints** plus a **witness region**. Fans on either endpoint read and write one
-logical database with no replication lag.
+logical database under synchronous commit quorum, with milliseconds-level cross-region convergence.
 
 ```mermaid
 flowchart TB
@@ -28,7 +28,7 @@ flowchart TB
   UI --> API --> TX
   TX -- "Region A endpoint" --> EA
   TX -- "Region B endpoint" --> EB
-  EA <-. "synchronous replication, zero lag" .-> EB
+  EA <-. "synchronous commit quorum" .-> EB
   EA -. quorum .-> W
   EB -. quorum .-> W
 ```

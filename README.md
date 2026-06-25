@@ -1,6 +1,6 @@
 # Dhamana — the fair-drop engine
 
-> **When 100,000 fans race for 10,000 seats, the database itself guarantees you cannot oversell a seat, cannot resell a ticket twice, and cannot let an account buy past its verified-fan cap — enforced at commit on Amazon Aurora DSQL, across active-active regions, at flash-drop scale.**
+> **When 10,000 fans race for 1,000 seats, the database itself guarantees you cannot oversell a seat, cannot resell a ticket twice, and cannot let an account buy past its verified-fan cap — enforced at commit on Amazon Aurora DSQL, across active-active regions, at flash-drop scale.**
 
 Built for **H0: Hack the Zero Stack** (Vercel + AWS Databases) · Track: **Million-Scale Global App** · Database: **Amazon Aurora DSQL** (multi-region).
 

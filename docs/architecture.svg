@@ -65,7 +65,7 @@
     <circle cx="716" cy="270" r="5" fill="#1f5a53"/>
     <text x="730" y="274" class="ink sans" font-size="13" font-weight="600">Endpoint B</text>
     <text x="700" y="296" class="mono ink2" font-size="11">us-west-2 · read + write</text>
-    <text x="700" y="313" class="ink3 sans" font-size="10.5">strong consistency, zero lag</text>
+    <text x="700" y="313" class="ink3 sans" font-size="10.5">strong consistency, commit quorum</text>
 
     <rect x="700" y="336" width="220" height="58" rx="4" fill="#efe8da" stroke="#ddd3c0" stroke-dasharray="4 3"/>
     <text x="700" y="358" class="ink2 sans" font-size="12.5" font-weight="600">Witness · US region</text>
