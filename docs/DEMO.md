@@ -19,12 +19,16 @@ ledgers still balance — the literal oversell. Toggle **Guarded** → fire agai
 - Seats `0`, both endpoints agree, tickets `1 / 1`. The loser hit `40001`, retried,
   and failed safe. *"The database arbitrated, not the app."*
 
-### 1:15–1:50 — The scalper gate
-Switch the fan to **QuickResale Bot** (unverified). On a section, try to buy **5**
-tickets → rejected **at commit** (`verification_required`) — the per-event cap is a
-row the buy transaction checks, not a UI throttle. Switch to **Kwame** (verified)
-and the same purchase goes through. Approve a pending fan on `/reviewer` to show
-the verification record + tier moving atomically (T3).
+### 1:15–1:50 — Beat the cap (you are the scalper)
+Go to `/scalper`. You're driving **QuickResale Bot** (unverified, cap 2). Crank
+**simultaneous buys** to ~24 and **spray across 32 buckets** — the textbook way to
+beat a counter (hit different rows so nothing collides). With **count(\*) cap**
+selected, **Launch attack**: the bot walks away with **48** — the cap leaked. Flip
+to **contended counter (Dhamana)** and fire the *same* attack: the bot is held at
+**2**, with **23 buys rejected at commit (`40001`)**. Same attack, one line of
+difference — the cap lives on a contended row, not a `count(*)`. *"I used the
+textbook bypass and the commit point ate it."* (Optional T3 beat: approve a pending
+fan on `/reviewer` to show the verification record + tier moving atomically.)
 
 ### 1:50–2:30 — Escrowed resale, DB-enforced cap
 On `/tickets` (as a verified fan holding a ticket), drag the resale slider **above
