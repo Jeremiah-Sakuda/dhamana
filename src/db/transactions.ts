@@ -193,6 +193,68 @@ export async function buyTicketsNaive(backend: Backend, input: BuyInput): Promis
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// NAIVE per-fan CAP — deliberately broken (cap write-skew), for the demo contrast.
+//
+// Identical to buyTickets EXCEPT the per-fan cap is checked with a count(*)
+// predicate read (countBuyerHoldsForEvent) instead of the contended
+// reserveBuyerHold. Inventory is still taken from the bucket for real, so the ONLY
+// difference is the cap mechanism: a same-buyer sweep across DISTINCT buckets all
+// reads the same stale count and all passes, so one buyer blows past their cap.
+// Reliable on the in-process engine; intermittent even on real DSQL (snapshot
+// isolation permits the write skew). This is the exact hole the P0 fix closed —
+// kept only so the Scalper Console can show the before/after live.
+// ─────────────────────────────────────────────────────────────────────────────
+export async function buyTicketsNaiveCap(backend: Backend, input: BuyInput): Promise<BuyResult> {
+  const { buyerId, sectionId, qty, buyerRegion } = input;
+  if (!validQty(qty)) throw new BlockedError("invalid_quantity");
+  const tx = backend.autocommitTx();
+
+  const section = await backend.repo.readSectionForUpdate(tx, sectionId);
+  if (!section) throw new BlockedError("section_not_found");
+  if (section.status === "paused") throw new BlockedError("section_inactive");
+
+  const tier: FanTier = (await backend.repo.readFanTier(tx, buyerId)) ?? "unverified";
+  const cap = TIERS[tier].maxPerEvent;
+
+  // The broken cap: a count(*) predicate read with no contended row. Two
+  // concurrent same-buyer buys both read the stale count and both pass.
+  const held = await backend.repo.countBuyerHoldsForEvent(tx, buyerId, section.event_id);
+  if (held + qty > cap) {
+    throw new BlockedError(tier === "unverified" ? "verification_required" : "order_limit_exceeded");
+  }
+
+  // Inventory is taken for real (same contended path as guarded) — so the ONLY
+  // thing broken in this variant is the per-fan cap.
+  const remaining = await backend.repo.sumSectionRemaining(tx, sectionId);
+  if (remaining < qty) throw new BlockedError("insufficient_inventory");
+  const took = await backend.repo.takeFromBucket(tx, sectionId, qty);
+  if (!took) throw new BlockedError("insufficient_inventory");
+
+  const amountCents = section.price_cents * qty;
+  const orderId = uuidv7();
+  const ts = new Date().toISOString();
+  await backend.repo.insertOrder(tx, {
+    id: orderId, buyer_id: buyerId, event_id: section.event_id, section_id: sectionId,
+    kind: "primary", qty, amount_cents: amountCents, currency: section.currency,
+    status: "escrowed", buyer_region: buyerRegion, idempotency_key: null, created_at: ts, updated_at: ts,
+  });
+  await backend.repo.insertEscrowAccount(tx, { order_id: orderId, held_cents: amountCents, state: "open", updated_at: ts });
+  await backend.repo.insertEscrowEntry(tx, { id: uuidv7(), order_id: orderId, entry_type: "hold", amount_cents: amountCents, balance_after_cents: amountCents, created_at: ts });
+  const ticketIds: string[] = [];
+  for (let i = 0; i < qty; i++) {
+    const tid = uuidv7();
+    ticketIds.push(tid);
+    await backend.repo.insertTicket(tx, {
+      id: tid, order_id: orderId, section_id: sectionId, event_id: section.event_id,
+      seat_label: `${section.id.slice(0, 4).toUpperCase()}-${(held + i + 1).toString().padStart(3, "0")}`,
+      holder_user_id: buyerId, state: "valid",
+      resale_price_cap_cents: resaleCapCents(section.price_cents), created_at: ts,
+    });
+  }
+  return { orderId, amountCents, ticketIds, attempts: 1, conflicts: 0 };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // T2 — RELEASE / REFUND ESCROW (idempotent). No double-release.
 // ─────────────────────────────────────────────────────────────────────────────
 export interface SettleResult { changed: boolean; attempts: number; conflicts: number; }

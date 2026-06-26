@@ -181,6 +181,13 @@ export class SqlBackend implements Backend {
           returning held_qty`;
         return rows.length ? n(rows[0].held_qty) : null;
       },
+      countBuyerHoldsForEvent: async (tx, buyerId, eventId): Promise<number> => {
+        const sql = (tx as SqlTx).sql;
+        // NAIVE cap predicate read (count(*)) — no contended row, so concurrent
+        // same-buyer buys never conflict here. The write-skew foil for the demo.
+        const rows = await sql`select count(*)::int as c from dhamana.tickets where holder_user_id = ${buyerId} and event_id = ${eventId} and state <> 'void'`;
+        return n(rows[0].c);
+      },
       insertOrder: async (tx, o: Order) => {
         const sql = (tx as SqlTx).sql;
         await sql`insert into dhamana.orders (id, buyer_id, event_id, section_id, kind, qty, amount_cents, currency, status, buyer_region, idempotency_key, created_at, updated_at)

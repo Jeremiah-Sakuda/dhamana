@@ -41,3 +41,10 @@ yarn-error.log*
 
 # local Claude Code tooling
 .claude/
+
+# private planning / strategy docs — never commit to the public repo
+HANDOFF.md
+HANDOFF_PRD.md
+PRD.md
+STRATEGY*.md
+/notes/

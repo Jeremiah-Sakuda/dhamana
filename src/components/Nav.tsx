@@ -7,6 +7,7 @@ import { PersonaSwitcher } from "./Persona";
 const LINKS = [
   { href: "/", label: "Events" },
   { href: "/consistency", label: "The drop" },
+  { href: "/scalper", label: "Beat the cap" },
   { href: "/tickets", label: "My tickets" },
   { href: "/promoter", label: "Promoter" },
   { href: "/reviewer", label: "Reviewer" },

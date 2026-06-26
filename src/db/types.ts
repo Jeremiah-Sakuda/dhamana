@@ -200,6 +200,15 @@ export interface Repo {
    */
   reserveBuyerHold(tx: Tx, buyerId: string, eventId: string, qty: number, cap: number): Promise<number | null>;
 
+  /**
+   * NAIVE per-fan cap "check": COUNT this buyer's active tickets for the event (a
+   * predicate read with NO contended row). This is the write-skew hole the guarded
+   * reserveBuyerHold closes — kept ONLY for the deliberately-broken demo contrast
+   * (the Scalper Console): concurrent same-buyer buys all read the same stale count
+   * and all pass the cap, so the bot exceeds it. Never used on a guarded path.
+   */
+  countBuyerHoldsForEvent(tx: Tx, buyerId: string, eventId: string): Promise<number>;
+
   insertOrder(tx: Tx, order: Order): Promise<void>;
   insertEscrowAccount(tx: Tx, account: EscrowAccount): Promise<void>;
   insertEscrowEntry(tx: Tx, entry: EscrowEntry): Promise<void>;

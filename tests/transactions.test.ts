@@ -3,6 +3,7 @@ import { freshMemoryBackend } from "../src/db/index";
 import {
   buyTickets,
   buyTicketsNaive,
+  buyTicketsNaiveCap,
   releaseEscrow,
   refundEscrow,
   decideVerification,
@@ -118,6 +119,25 @@ describe("verified-fan gate — the anti-scalping primitive", () => {
     const held = (await db.q.listTicketsForSection(FLASH_SECTION_ID))
       .filter((t) => t.holder_user_id === BOT_ID && t.state !== "void").length;
     expect(held).toBeLessThanOrEqual(2); // never the 4 a write-skew cap would allow
+  });
+
+  it("NAIVE cap (count(*)) write-skews — the same sweep blows past the cap (the foil)", async () => {
+    // The deliberately-broken foil powering the Scalper Console: the per-fan cap is
+    // a count(*) predicate read with no contended row, so concurrent same-buyer
+    // buys across DISTINCT buckets all read the same stale count and all pass — the
+    // bot exceeds its cap of 2. This is exactly the hole the guarded path closes
+    // (the test above), shown here genuinely broken so the demo contrast is honest.
+    await db.reshardSection(FLASH_SECTION_ID, 32);
+    const results = await Promise.allSettled(
+      Array.from({ length: 6 }, () =>
+        buyTicketsNaiveCap(db, { buyerId: BOT_ID, sectionId: FLASH_SECTION_ID, qty: 2, buyerRegion: "attack" }),
+      ),
+    );
+    const ok = results.filter((r) => r.status === "fulfilled").length;
+    const held = (await db.q.listTicketsForSection(FLASH_SECTION_ID))
+      .filter((t) => t.holder_user_id === BOT_ID && t.state !== "void").length;
+    expect(ok).toBeGreaterThan(1); // more than one buy of 2 slips through
+    expect(held).toBeGreaterThan(2); // the foil genuinely leaks past the cap of 2
   });
 });
 

@@ -277,6 +277,20 @@ export class MemoryBackend implements Backend {
         return held + qty;
       },
 
+      countBuyerHoldsForEvent: async (tx, buyerId, eventId): Promise<number> => {
+        await tick();
+        const t = tx as MemTx;
+        // A predicate read — deliberately NOT trackRead'd, so concurrent same-buyer
+        // buys never conflict here. That missing conflict surface IS the write-skew
+        // the guarded reserveBuyerHold closes; this exists only for the demo foil.
+        let n = 0;
+        for (const row of this.tables.tickets.values())
+          if ((row.holder_user_id as string) === buyerId && (row.event_id as string) === eventId && row.state !== "void") n++;
+        for (const op of t.writes)
+          if (op.kind === "insert" && op.table === "tickets" && (op.row.holder_user_id as string) === buyerId && (op.row.event_id as string) === eventId) n++;
+        return n;
+      },
+
       insertOrder: async (tx, o: Order) => { await tick(); this.write(tx as MemTx, { kind: "insert", table: "orders", pk: o.id, row: { ...o } }); },
       insertEscrowAccount: async (tx, a: EscrowAccount) => { await tick(); this.write(tx as MemTx, { kind: "insert", table: "escrow_accounts", pk: a.order_id, row: { ...a } }); },
       insertEscrowEntry: async (tx, e: EscrowEntry) => { await tick(); this.write(tx as MemTx, { kind: "insert", table: "escrow_entries", pk: e.id, row: { ...e } }); },
