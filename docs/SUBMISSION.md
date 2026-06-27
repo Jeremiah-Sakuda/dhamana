@@ -82,14 +82,16 @@ The same commit-time invariants power any contested-scarce-resource-at-scale mar
 
 ## Submission checklist
 - [x] Track: **Million-Scale Global App**
-- [ ] Public Vercel deployment link (deploy with `DB_BACKEND=dsql`)
+- [x] Public Vercel deployment link: **https://dhamana.vercel.app** (live, running `DB_BACKEND=dsql`)
 - [ ] Demo video < 3 min on YouTube; explains the AWS database — script in [DEMO.md](DEMO.md)
 - [x] Architecture diagram — [architecture.svg](architecture.svg)
-- [ ] Screenshot proving AWS DB usage (AWS console showing the DSQL cluster)
-- [ ] Vercel Team ID
-- [x] Database named: **Amazon Aurora DSQL**
+- [x] Screenshot proving AWS DB usage — AWS console: `dsql-cluster-1` Active in us-east-1, Peers tab showing the **us-west-2 cluster peer** + **us-east-2 witness** (genuine multi-region active-active)
+- [x] Vercel Team ID: **team_PzQLwmzvcFQ3RoB6855lUCiB**
+- [x] Database named: **Amazon Aurora DSQL** (multi-region: us-east-1 + us-west-2 + us-east-2 witness)
 - [x] Text description (features + functionality) — above + [README](../README.md)
 - [x] New-work statement: built during the submission period in a standalone repo
 - [x] Bonus content piece: [BLOG.md](BLOG.md) — includes the hackathon line + **#H0Hackathon**
 
-> Unchecked items require your AWS/Vercel/YouTube accounts and the recorded video.
+> Only remaining item: the < 3-min YouTube demo video. Recommended before submitting:
+> push the local commits so the live site has the P0 cap fix + Scalper Console, and
+> capture a live `npm run smoke:dsql` run into `docs/evidence/`.
